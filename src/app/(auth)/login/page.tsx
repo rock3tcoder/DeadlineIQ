@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { Suspense, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { useForm } from 'react-hook-form'
@@ -26,12 +26,20 @@ const schema = z.object({
 
 type FormData = z.infer<typeof schema>
 
-export default function LoginPage() {
-  const router = useRouter()
+function ConfirmationError() {
   const searchParams = useSearchParams()
-  const [serverError, setServerError] = useState<string | null>(null)
+  const hasError = searchParams.get('error') === 'confirmation_failed'
+  if (!hasError) return null
+  return (
+    <div className="rounded-md bg-red-500/10 border border-red-500/20 px-4 py-3 text-sm text-red-400">
+      The confirmation link is invalid or has expired. Please try again.
+    </div>
+  )
+}
 
-  const confirmationError = searchParams.get('error') === 'confirmation_failed'
+function LoginForm() {
+  const router = useRouter()
+  const [serverError, setServerError] = useState<string | null>(null)
 
   const {
     register,
@@ -65,11 +73,10 @@ export default function LoginPage() {
 
       <form onSubmit={handleSubmit(onSubmit)}>
         <CardContent className="space-y-4">
-          {confirmationError && (
-            <div className="rounded-md bg-red-500/10 border border-red-500/20 px-4 py-3 text-sm text-red-400">
-              The confirmation link is invalid or has expired. Please try again.
-            </div>
-          )}
+          <Suspense>
+            <ConfirmationError />
+          </Suspense>
+
           {serverError && (
             <div className="rounded-md bg-red-500/10 border border-red-500/20 px-4 py-3 text-sm text-red-400">
               {serverError}
@@ -135,4 +142,8 @@ export default function LoginPage() {
       </form>
     </Card>
   )
+}
+
+export default function LoginPage() {
+  return <LoginForm />
 }
