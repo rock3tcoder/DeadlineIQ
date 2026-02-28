@@ -1,5 +1,6 @@
 // Server-side Supabase client (used in Server Components & Route Handlers)
 import { createServerClient } from '@supabase/ssr'
+import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import { cookies } from 'next/headers'
 
 export async function createClient() {
@@ -29,7 +30,6 @@ export async function createClient() {
 
 // Admin client — bypasses RLS. Use only in trusted server-side code.
 export function createAdminClient() {
-  const { createClient: createSupabaseClient } = require('@supabase/supabase-js')
   return createSupabaseClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
