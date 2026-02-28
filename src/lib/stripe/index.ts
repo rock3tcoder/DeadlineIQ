@@ -1,8 +1,24 @@
 import Stripe from 'stripe'
 
-export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  // @ts-expect-error — pinning API version string
-  apiVersion: '2024-06-20',
+// Lazy singleton — only initialised when first used at request time, not at build time
+let _stripe: Stripe | null = null
+
+export function getStripe(): Stripe {
+  if (!_stripe) {
+    if (!process.env.STRIPE_SECRET_KEY) throw new Error('Missing STRIPE_SECRET_KEY')
+    _stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+      // @ts-expect-error — pinning API version string
+      apiVersion: '2024-06-20',
+    })
+  }
+  return _stripe
+}
+
+/** @deprecated Use getStripe() instead */
+export const stripe = new Proxy({} as Stripe, {
+  get(_target, prop) {
+    return (getStripe() as unknown as Record<string | symbol, unknown>)[prop]
+  },
 })
 
 export const PLANS = {
