@@ -12,6 +12,7 @@ import {
   Menu,
   CreditCard,
   Info,
+  TrendingUp,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -23,6 +24,7 @@ const navItems = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { label: 'Updates', href: '/alerts', icon: Bell },
   { label: 'My Sources', href: '/markets', icon: Globe },
+  { label: 'Wealth Operator', href: '/wealth', icon: TrendingUp },
   { label: 'Billing', href: '/settings/billing', icon: CreditCard },
   { label: 'Settings', href: '/settings', icon: Settings },
 ]
