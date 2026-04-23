@@ -1,18 +1,12 @@
 /**
  * Wealth Operator Notifier
  *
- * Sends instant alerts for A+ deals via:
- *  1. Email (Resend) — full detailed email
- *  2. WhatsApp (Twilio) — short punchy message
+ * Sends instant email alerts for A+ and A deals via Resend.
  *
  * Env vars required:
- *  WEALTH_ALERT_EMAIL      — recipient email (default: benrubera1@gmail.com)
- *  WEALTH_ALERT_PHONE      — recipient phone E.164 format (default: +18652873491)
- *  TWILIO_ACCOUNT_SID      — Twilio account SID
- *  TWILIO_AUTH_TOKEN       — Twilio auth token
- *  TWILIO_WHATSAPP_FROM    — sending WhatsApp number (e.g. whatsapp:+14155238886)
- *  RESEND_API_KEY          — Resend API key
- *  RESEND_FROM_EMAIL       — from address (default: alerts@deadlineiq.com)
+ *  WEALTH_ALERT_EMAIL  — recipient email (default: benrubera1@gmail.com)
+ *  RESEND_API_KEY      — Resend API key
+ *  RESEND_FROM_EMAIL   — from address (default: alerts@deadlineiq.com)
  */
 
 import { Resend } from 'resend'
@@ -21,7 +15,6 @@ import type { WealthOpportunity } from './types.js'
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const ALERT_EMAIL = process.env.WEALTH_ALERT_EMAIL ?? 'benrubera1@gmail.com'
-const ALERT_PHONE = process.env.WEALTH_ALERT_PHONE ?? '+18652873491'
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL ?? 'alerts@deadlineiq.com'
 const APP_URL = process.env.APP_URL ?? 'https://deadlineiq.com'
 
@@ -149,75 +142,6 @@ function buildAlertEmail(opp: WealthOpportunity): string {
 </html>`
 }
 
-// ─── WhatsApp helper via Twilio HTTP API ──────────────────────────────────────
-
-async function sendWhatsApp(message: string): Promise<void> {
-  const sid = process.env.TWILIO_ACCOUNT_SID
-  const token = process.env.TWILIO_AUTH_TOKEN
-  const from = process.env.TWILIO_WHATSAPP_FROM ?? 'whatsapp:+14155238886'
-  const to = `whatsapp:${ALERT_PHONE}`
-
-  if (!sid || !token) {
-    console.log('  [notifier] WhatsApp skipped — TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN not set')
-    return
-  }
-
-  const url = `https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`
-  const body = new URLSearchParams({ From: from, To: to, Body: message })
-
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Basic ${Buffer.from(`${sid}:${token}`).toString('base64')}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: body.toString(),
-      signal: AbortSignal.timeout(15_000),
-    })
-
-    if (!res.ok) {
-      const err = await res.text()
-      console.error('  [notifier] WhatsApp failed:', err)
-    } else {
-      console.log('  [notifier] WhatsApp sent ✓')
-    }
-  } catch (err) {
-    console.error('  [notifier] WhatsApp error:', err instanceof Error ? err.message : err)
-  }
-}
-
-// ─── Build WhatsApp short message ─────────────────────────────────────────────
-
-function buildWhatsAppMessage(opp: WealthOpportunity): string {
-  const typeEmoji =
-    opp.opportunity_type === 'acquisition' ? '🏢' :
-    opp.opportunity_type === 'capital_injection' ? '💰' : '💼'
-
-  if (opp.opportunity_type === 'job') {
-    return `${typeEmoji} *${opp.grade} Job Found*
-${opp.firm_name ?? opp.name}
-${opp.job_title ?? ''}
-Est. comp: $${opp.estimated_comp_low?.toLocaleString() ?? '?'}–$${opp.estimated_comp_high?.toLocaleString() ?? '?'}
-Fit: ${opp.fit_score}/10
-
-→ ${opp.ai_next_step ?? 'Review and apply'}
-${opp.source_url ?? ''}`
-  }
-
-  return `${typeEmoji} *${opp.grade} Deal Found*
-${opp.name}
-${opp.location}
-Ask: ${opp.asking_price ? `$${opp.asking_price.toLocaleString()}` : 'TBD'}
-CF: ${opp.cash_flow_annual ? `$${opp.cash_flow_annual.toLocaleString()}/yr` : 'TBD'}
-Equity: ${opp.equity_needed ? `~$${opp.equity_needed.toLocaleString()}` : 'TBD'}
-CoC: ${opp.cash_on_cash_return ? `${opp.cash_on_cash_return.toFixed(0)}%` : 'TBD'}
-Passive: ${opp.passive_possible ? 'YES ✓' : 'REVIEW ⚠️'}
-
-→ ${opp.ai_next_step ?? 'Contact broker/owner'}
-${opp.source_url ?? ''}`
-}
-
 // ─── Main export — send instant alert for A+ and A opportunities ──────────────
 
 export async function sendInstantWealthAlert(opp: WealthOpportunity): Promise<void> {
@@ -245,11 +169,5 @@ export async function sendInstantWealthAlert(opp: WealthOpportunity): Promise<vo
     }
   } else {
     console.log('  [notifier] Email skipped — RESEND_API_KEY not set')
-  }
-
-  // 2. WhatsApp (A+ only, to avoid noise)
-  if (opp.grade === 'A+') {
-    const msg = buildWhatsAppMessage(opp)
-    await sendWhatsApp(msg)
   }
 }
