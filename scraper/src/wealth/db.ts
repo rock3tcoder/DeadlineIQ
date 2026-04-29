@@ -1,5 +1,13 @@
-import db from '../db.js'
+import { createClient } from '@supabase/supabase-js'
 import type { RawListing, UnderwritingResult, WealthOpportunity } from './types.js'
+
+// Use dedicated wealth Supabase project if configured, otherwise fall back to main project
+const WEALTH_URL = process.env.WEALTH_SUPABASE_URL ?? process.env.SUPABASE_URL ?? ''
+const WEALTH_KEY = process.env.WEALTH_SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY ?? ''
+
+const db = createClient(WEALTH_URL, WEALTH_KEY, {
+  auth: { persistSession: false },
+})
 
 // ─── Check if a listing already exists (dedup) ───────────────────────────────
 

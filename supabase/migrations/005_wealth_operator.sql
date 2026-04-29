@@ -4,6 +4,15 @@
 -- and job opportunities for the autonomous wealth operator.
 -- ============================================================
 
+-- Self-contained: create handle_updated_at if it doesn't already exist
+create or replace function public.handle_updated_at()
+returns trigger language plpgsql as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
 -- ── Opportunity type / grade / status enums ──────────────────
 
 create type wealth_opp_type   as enum ('acquisition', 'capital_injection', 'job');

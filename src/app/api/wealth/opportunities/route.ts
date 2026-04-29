@@ -1,5 +1,13 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { createClient as createServiceClient } from '@supabase/supabase-js'
+
+// Wealth data lives in a dedicated Supabase project
+const wealthDb = createServiceClient(
+  process.env.WEALTH_SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? '',
+  process.env.WEALTH_SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
+  { auth: { persistSession: false } },
+)
 
 export async function GET() {
   const supabase = await createClient()
@@ -13,7 +21,7 @@ export async function GET() {
   }
 
   // Fetch opportunities — newest first, best grades first
-  const { data: opportunities, error: oppError } = await supabase
+  const { data: opportunities, error: oppError } = await wealthDb
     .from('wealth_opportunities')
     .select('*')
     .neq('status', 'passed')
@@ -25,7 +33,7 @@ export async function GET() {
   }
 
   // Fetch outreach drafts
-  const { data: outreach, error: outreachError } = await supabase
+  const { data: outreach, error: outreachError } = await wealthDb
     .from('wealth_outreach')
     .select('*')
     .is('sent_at', null)
