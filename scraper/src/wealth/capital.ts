@@ -122,31 +122,39 @@ function parseCraigslistListings(html: string, query: string): RawBusinessListin
   const $ = cheerio.load(html)
   const results: RawBusinessListing[] = []
 
-  // Craigslist result rows
-  $('li.cl-search-result, .result-row, li[data-pid]').each((_: number, el: unknown) => {
+  // Craigslist 2024+ structure: ol.cl-static-search-result > li.cl-search-result
+  // Fallback to older selectors for compatibility
+  const items = $('li.cl-search-result').length > 0
+    ? $('li.cl-search-result')
+    : $('.result-row, li[data-pid]')
+
+  items.each((_: number, el: unknown) => {
     try {
       const item = $(el)
-      const pid = item.attr('data-pid') ?? item.attr('id') ?? ''
-      const titleEl = item.find('.result-title, a.titlestring, [class*="result-title"]').first()
-      const name = titleEl.text().trim()
+
+      // New structure: anchor with data-id, title in .label or direct text
+      const anchor = item.find('a.cl-app-anchor, a[data-id], .result-title, a.titlestring').first()
+      const name = (item.find('.label, .result-title').first().text() || anchor.text()).trim()
       if (!name || name.length < 5) return
 
-      const href = titleEl.attr('href') ?? item.find('a').first().attr('href') ?? ''
+      const href = anchor.attr('href') ?? item.find('a').first().attr('href') ?? ''
       if (!href) return
 
       const sourceUrl = href.startsWith('http') ? href : `https://newyork.craigslist.org${href}`
-      const location = item.find('.result-hood, [class*="location"]').text().replace(/[()]/g, '').trim()
-        || 'New York area'
+
+      // New structure: location in .meta, old: .result-hood
+      const location = item.find('.meta, .result-hood, [class*="location"]').first()
+        .text().replace(/[()·]/g, '').trim().split('\n')[0].trim() || 'New York area'
 
       const allText = item.text()
       if (!isAuthentic(allText + name)) return
 
-      // Try to extract price from listing
-      const priceEl = item.find('.result-price, [class*="price"]').first()
-      const priceText = priceEl.text().trim()
-      const askingPrice = parseNumber(priceText)
+      const priceEl = item.find('.priceinfo, .result-price, [class*="price"]').first()
+      const askingPrice = parseNumber(priceEl.text().trim())
 
-      const externalId = pid || href.replace(/[^a-z0-9]/gi, '_').slice(-80)
+      // Use data-id or derive from href
+      const externalId = anchor.attr('data-id') ?? item.attr('data-pid')
+        ?? href.replace(/[^a-z0-9]/gi, '_').slice(-80)
 
       results.push({
         opportunity_type: 'capital_injection',

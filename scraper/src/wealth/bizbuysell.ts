@@ -266,6 +266,68 @@ function parseEmpireFlippersListings(html: string): RawBusinessListing[] {
   return results.slice(0, 15)
 }
 
+// ─── Craigslist business-for-sale parser (acquisition source) ─────────────────
+
+const CRAIGSLIST_BFS_SEARCHES = [
+  { url: 'https://newyork.craigslist.org/search/bfs?sort=date', region: 'New York' },
+  { url: 'https://newjersey.craigslist.org/search/bfs?sort=date', region: 'New Jersey' },
+  { url: 'https://newyork.craigslist.org/search/bfs?query=car+wash&sort=date', region: 'New York' },
+  { url: 'https://newyork.craigslist.org/search/bfs?query=laundromat&sort=date', region: 'New York' },
+  { url: 'https://newyork.craigslist.org/search/bfs?query=vending&sort=date', region: 'New York' },
+  { url: 'https://newyork.craigslist.org/search/bfs?query=cleaning+service&sort=date', region: 'New York' },
+  { url: 'https://newyork.craigslist.org/search/bfs?query=food+truck&sort=date', region: 'New York' },
+]
+
+function parseCraigslistBFS(html: string, region: string): RawBusinessListing[] {
+  const $ = cheerio.load(html)
+  const results: RawBusinessListing[] = []
+
+  const items = $('li.cl-search-result').length > 0
+    ? $('li.cl-search-result')
+    : $('.result-row, li[data-pid]')
+
+  items.each((_: number, el: unknown) => {
+    try {
+      const item = $(el)
+      const anchor = item.find('a.cl-app-anchor, a[data-id], .result-title, a.titlestring').first()
+      const name = (item.find('.label, .result-title').first().text() || anchor.text()).trim()
+      if (!name || name.length < 5) return
+
+      const href = anchor.attr('href') ?? item.find('a').first().attr('href') ?? ''
+      if (!href) return
+
+      const sourceUrl = href.startsWith('http') ? href : `https://newyork.craigslist.org${href}`
+      const location = item.find('.meta, .result-hood').first()
+        .text().replace(/[()·]/g, '').trim().split('\n')[0].trim() || region
+
+      const priceEl = item.find('.priceinfo, .result-price').first()
+      const askingPrice = parseNumber(priceEl.text().trim())
+
+      // Skip obvious overpriced listings
+      if (askingPrice && askingPrice > 600_000) return
+
+      const externalId = anchor.attr('data-id') ?? item.attr('data-pid')
+        ?? href.replace(/[^a-z0-9]/gi, '_').slice(-80)
+
+      results.push({
+        opportunity_type: 'acquisition',
+        name,
+        description: `Business for sale on Craigslist — ${region}`,
+        location,
+        source_url: sourceUrl,
+        source_platform: 'craigslist',
+        external_id: externalId,
+        asking_price: askingPrice,
+        business_type: 'unknown',
+      })
+    } catch {
+      // Skip
+    }
+  })
+
+  return results.slice(0, 15)
+}
+
 // ─── Main export ──────────────────────────────────────────────────────────────
 
 export async function scrapeBizBuySell(): Promise<RawBusinessListing[]> {
@@ -287,7 +349,6 @@ export async function scrapeBizBuySell(): Promise<RawBusinessListing[]> {
         ? parseEmpireFlippersListings(html)
         : parseBizBuySellListings(html, config.type, config.url)
 
-    // Override platform for empire flippers
     if (platform === 'empireflippers') {
       listings.forEach((l) => (l.source_platform = 'empireflippers'))
     }
@@ -295,8 +356,19 @@ export async function scrapeBizBuySell(): Promise<RawBusinessListing[]> {
     console.log(`    Found ${listings.length} listings`)
     allListings.push(...listings)
 
-    // Polite delay between requests
     await delay(1500 + Math.random() * 1000)
+  }
+
+  // Craigslist BFS — reliable fallback since they don't block cloud IPs
+  console.log('  → Fetching Craigslist business-for-sale listings...')
+  for (const search of CRAIGSLIST_BFS_SEARCHES) {
+    const html = await fetchPage(search.url)
+    if (html) {
+      const listings = parseCraigslistBFS(html, search.region)
+      console.log(`    Craigslist BFS [${search.region}]: ${listings.length} listings`)
+      allListings.push(...listings)
+    }
+    await delay(800 + Math.random() * 400)
   }
 
   // Deduplicate by external_id within this batch
