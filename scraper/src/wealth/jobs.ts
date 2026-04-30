@@ -230,98 +230,161 @@ function parseLinkedInJobs(html: string, roleType: string): RawJobListing[] {
   return results.slice(0, 10)
 }
 
-// ─── High-target firm direct career pages ────────────────────────────────────
+// ─── Greenhouse JSON API — public, no auth, returns structured data ───────────
 
-const TARGET_FIRMS = [
-  { name: 'KKR', url: 'https://jobs.lever.co/kkr', platform: 'lever' },
-  { name: 'Apollo', url: 'https://careers.apollo.com/jobs', platform: 'greenhouse' },
-  { name: 'Blackstone', url: 'https://careers.blackstone.com/jobs', platform: 'greenhouse' },
-  { name: 'Carlyle', url: 'https://jobs.carlyle.com/jobs', platform: 'greenhouse' },
-  { name: 'TPG', url: 'https://jobs.lever.co/tpg', platform: 'lever' },
-  { name: 'Warburg Pincus', url: 'https://www.warburgpincus.com/careers/', platform: 'custom' },
-  { name: 'General Atlantic', url: 'https://www.generalatlantic.com/careers/', platform: 'custom' },
+const GREENHOUSE_FIRMS = [
+  { slug: 'blackstone', name: 'Blackstone' },
+  { slug: 'apolloglobalmanagement', name: 'Apollo Global Management' },
+  { slug: 'carlyle', name: 'The Carlyle Group' },
+  { slug: 'generalatlantic', name: 'General Atlantic' },
+  { slug: 'warburgpincus', name: 'Warburg Pincus' },
+  { slug: 'baincapital', name: 'Bain Capital' },
+  { slug: 'tpg', name: 'TPG' },
+  { slug: 'brookfield', name: 'Brookfield Asset Management' },
+  { slug: 'vistaequitypartners', name: 'Vista Equity Partners' },
+  { slug: 'hgcapital', name: 'HG Capital' },
+  { slug: 'silverlakegroup', name: 'Silver Lake' },
+  { slug: 'advent', name: 'Advent International' },
+  { slug: 'ares', name: 'Ares Management' },
+  { slug: 'blueowl', name: 'Blue Owl Capital' },
 ]
 
-async function scrapeTargetFirm(firm: {
-  name: string
-  url: string
-  platform: string
-}): Promise<RawJobListing[]> {
-  const html = await fetchUrl(firm.url)
-  if (!html) return []
+const INVEST_KEYWORDS = ['associat', 'analyst', 'principal', 'vice president', 'vp', 'director', 'invest', 'deal', 'origination', 'portfolio', 'credit', 'equity', 'capital']
+const SKIP_KEYWORDS = ['intern', 'software', 'engineer', 'marketing', ' hr ', 'legal', 'accountant', 'administrative', 'receptionist', 'coordinator', 'facilities']
 
+function isFinanceRole(title: string): boolean {
+  const lower = title.toLowerCase()
+  return (
+    !SKIP_KEYWORDS.some((k) => lower.includes(k)) &&
+    INVEST_KEYWORDS.some((k) => lower.includes(k))
+  )
+}
+
+async function scrapeGreenhouseJobs(slug: string, firmName: string): Promise<RawJobListing[]> {
+  try {
+    const res = await fetch(`https://boards-api.greenhouse.io/v1/boards/${slug}/jobs`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (!res.ok) return []
+
+    const data = await res.json() as { jobs?: Array<{ id: number; title: string; location: { name: string }; absolute_url: string; updated_at: string }> }
+    const jobs = data.jobs ?? []
+
+    return jobs
+      .filter((j) => isFinanceRole(j.title) && j.location.name.toLowerCase().includes('new york'))
+      .slice(0, 8)
+      .map((j) => {
+        const comp = estimateComp(j.title, 'PE Associate')
+        return {
+          opportunity_type: 'job' as const,
+          name: `${firmName} — ${j.title}`,
+          firm_name: firmName,
+          job_title: j.title,
+          description: `Investment role at ${firmName}, New York. Apply via Greenhouse.`,
+          location: j.location.name || 'New York, NY',
+          source_url: j.absolute_url,
+          source_platform: 'greenhouse',
+          external_id: `greenhouse_${j.id}`,
+          estimated_comp_low: comp.low,
+          estimated_comp_high: comp.high,
+          listing_date: j.updated_at ? new Date(j.updated_at).toISOString().split('T')[0] : undefined,
+        }
+      })
+  } catch {
+    return []
+  }
+}
+
+// ─── Lever JSON API — also public ────────────────────────────────────────────
+
+const LEVER_FIRMS = [
+  { slug: 'kkr', name: 'KKR' },
+  { slug: 'golub-capital', name: 'Golub Capital' },
+  { slug: 'hps-investment-partners', name: 'HPS Investment Partners' },
+  { slug: 'starwood-capital-group', name: 'Starwood Capital' },
+]
+
+async function scrapeLeverJobs(slug: string, firmName: string): Promise<RawJobListing[]> {
+  try {
+    const res = await fetch(`https://api.lever.co/v0/postings/${slug}?mode=json`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (!res.ok) return []
+
+    const jobs = await res.json() as Array<{ id: string; text: string; categories: { location?: string }; hostedUrl: string; createdAt: number }>
+
+    return jobs
+      .filter((j) => isFinanceRole(j.text) && (j.categories.location ?? '').toLowerCase().includes('new york'))
+      .slice(0, 8)
+      .map((j) => {
+        const comp = estimateComp(j.text, 'PE Associate')
+        return {
+          opportunity_type: 'job' as const,
+          name: `${firmName} — ${j.text}`,
+          firm_name: firmName,
+          job_title: j.text,
+          description: `Investment role at ${firmName}, New York. Apply via Lever.`,
+          location: j.categories.location || 'New York, NY',
+          source_url: j.hostedUrl,
+          source_platform: 'lever',
+          external_id: `lever_${j.id}`,
+          estimated_comp_low: comp.low,
+          estimated_comp_high: comp.high,
+          listing_date: j.createdAt ? new Date(j.createdAt).toISOString().split('T')[0] : undefined,
+        }
+      })
+  } catch {
+    return []
+  }
+}
+
+// ─── eFinancialCareers HTML scraper ──────────────────────────────────────────
+
+const EFINANCIAL_SEARCHES = [
+  { url: 'https://www.efinancialcareers.com/search?q=private+equity+associate&location=New+York%2C+NY%2C+USA', role: 'PE Associate' },
+  { url: 'https://www.efinancialcareers.com/search?q=investment+banking+associate&location=New+York%2C+NY%2C+USA', role: 'IB Associate' },
+  { url: 'https://www.efinancialcareers.com/search?q=private+credit+associate&location=New+York%2C+NY%2C+USA', role: 'Private Credit' },
+  { url: 'https://www.efinancialcareers.com/search?q=growth+equity+associate&location=New+York%2C+NY%2C+USA', role: 'Growth Equity' },
+]
+
+function parseEFinancialCareers(html: string, roleType: string): RawJobListing[] {
   const $ = cheerio.load(html)
   const results: RawJobListing[] = []
 
-  // Generic job listing parser — works across Lever, Greenhouse, and custom pages
-  const jobSelectors = [
-    '.posting-title',
-    '[class*="job-title"]',
-    '[class*="position-title"]',
-    'h3 a',
-    '.jobs-list li a',
-    '[data-qa="job-link"]',
-  ]
+  $('[data-testid="job-card"], .job-card, [class*="JobCard"], article[class*="job"]').each((_: number, el: unknown) => {
+    try {
+      const card = $(el)
+      const jobTitle = card.find('[data-testid="job-title"], [class*="job-title"], h2, h3').first().text().trim()
+      const firm = card.find('[data-testid="company-name"], [class*="company"], [class*="employer"]').first().text().trim()
+      const href = card.find('a').first().attr('href') ?? ''
+      if (!jobTitle || !href) return
+      if (!isFinanceRole(jobTitle)) return
 
-  for (const sel of jobSelectors) {
-    const elements = $(sel)
-    if (elements.length === 0) continue
+      const sourceUrl = href.startsWith('http') ? href : `https://www.efinancialcareers.com${href}`
+      const externalId = href.replace(/[^a-z0-9]/gi, '_').slice(-100)
+      const comp = estimateComp(jobTitle, roleType)
 
-    elements.each((_: number, el: unknown) => {
-      try {
-        const jobTitle = $(el).text().trim()
-        if (!jobTitle || jobTitle.length < 3) return
+      results.push({
+        opportunity_type: 'job',
+        name: `${firm || 'Finance Firm'} — ${jobTitle}`,
+        firm_name: firm || 'Unknown Firm',
+        job_title: jobTitle,
+        description: `${roleType} opportunity in New York sourced from eFinancialCareers.`,
+        location: 'New York, NY',
+        source_url: sourceUrl,
+        source_platform: 'efinancialcareers',
+        external_id: externalId,
+        estimated_comp_low: comp.low,
+        estimated_comp_high: comp.high,
+      })
+    } catch {
+      // Skip
+    }
+  })
 
-        const lower = jobTitle.toLowerCase()
-        if (
-          lower.includes('intern') ||
-          lower.includes('software') ||
-          lower.includes('engineer') ||
-          lower.includes('marketing') ||
-          lower.includes('hr') ||
-          lower.includes('legal')
-        ) return
-
-        // We only care about investing / finance roles
-        const isRelevant =
-          lower.includes('associat') ||
-          lower.includes('analyst') ||
-          lower.includes('principal') ||
-          lower.includes('director') ||
-          lower.includes('vice president') ||
-          lower.includes('invest') ||
-          lower.includes('deal') ||
-          lower.includes('origination') ||
-          lower.includes('portfolio')
-
-        if (!isRelevant) return
-
-        const href = $(el).attr('href') ?? $(el).closest('a').attr('href') ?? ''
-        const sourceUrl = href.startsWith('http') ? href : `${new URL(firm.url).origin}${href}`
-        const externalId = (`${firm.name}_${jobTitle}`).replace(/[^a-z0-9]/gi, '_').slice(0, 100)
-        const comp = estimateComp(jobTitle, 'PE Associate')
-
-        results.push({
-          opportunity_type: 'job',
-          name: `${firm.name} — ${jobTitle}`,
-          firm_name: firm.name,
-          job_title: jobTitle,
-          description: `Investment role at ${firm.name} (NYC). Sourced from firm career page.`,
-          location: 'New York, NY',
-          source_url: sourceUrl || firm.url,
-          source_platform: `firm_${firm.platform}`,
-          external_id: externalId,
-          estimated_comp_low: comp.low,
-          estimated_comp_high: comp.high,
-        })
-      } catch {
-        // Skip
-      }
-    })
-    break // Use first selector that worked
-  }
-
-  return results.slice(0, 5)
+  return results.slice(0, 10)
 }
 
 // ─── Main export ──────────────────────────────────────────────────────────────
@@ -330,38 +393,53 @@ export async function scrapeJobs(): Promise<RawJobListing[]> {
   console.log('[wealth:jobs] Starting NYC job scan...')
   const all: RawJobListing[] = []
 
-  // 1. Indeed RSS (most reliable)
+  // 1. Greenhouse JSON API — most reliable, public, structured
+  for (const firm of GREENHOUSE_FIRMS) {
+    const results = await scrapeGreenhouseJobs(firm.slug, firm.name)
+    if (results.length > 0) console.log(`  → Greenhouse [${firm.name}]: ${results.length} roles`)
+    all.push(...results)
+    await delay(500)
+  }
+
+  // 2. Lever JSON API — also public
+  for (const firm of LEVER_FIRMS) {
+    const results = await scrapeLeverJobs(firm.slug, firm.name)
+    if (results.length > 0) console.log(`  → Lever [${firm.name}]: ${results.length} roles`)
+    all.push(...results)
+    await delay(500)
+  }
+
+  // 3. eFinancialCareers — finance-specific job board
+  for (const search of EFINANCIAL_SEARCHES) {
+    const html = await fetchUrl(search.url)
+    if (html) {
+      const results = parseEFinancialCareers(html, search.role)
+      if (results.length > 0) console.log(`  → eFinancialCareers [${search.role}]: ${results.length} jobs`)
+      all.push(...results)
+    }
+    await delay(1000)
+  }
+
+  // 4. Indeed RSS (try — may be blocked from cloud IPs)
   for (const feed of INDEED_RSS_FEEDS) {
     const xml = await fetchUrl(feed.url)
     if (xml) {
       const results = parseIndeedRSS(xml, feed.role_type)
-      console.log(`  → Indeed [${feed.role_type}]: ${results.length} jobs`)
+      if (results.length > 0) console.log(`  → Indeed [${feed.role_type}]: ${results.length} jobs`)
       all.push(...results)
     }
     await delay(800)
   }
 
-  // 2. LinkedIn (may be blocked, graceful fallback)
+  // 5. LinkedIn (may be blocked, graceful fallback)
   for (const search of LINKEDIN_SEARCHES) {
     const html = await fetchUrl(search.url)
     if (html) {
       const results = parseLinkedInJobs(html, search.role_type)
-      if (results.length > 0) {
-        console.log(`  → LinkedIn [${search.role_type}]: ${results.length} jobs`)
-        all.push(...results)
-      }
-    }
-    await delay(1200)
-  }
-
-  // 3. Target firm career pages
-  for (const firm of TARGET_FIRMS) {
-    const results = await scrapeTargetFirm(firm)
-    if (results.length > 0) {
-      console.log(`  → ${firm.name}: ${results.length} roles`)
+      if (results.length > 0) console.log(`  → LinkedIn [${search.role_type}]: ${results.length} jobs`)
       all.push(...results)
     }
-    await delay(1000)
+    await delay(1200)
   }
 
   // Deduplicate by external_id
@@ -373,9 +451,7 @@ export async function scrapeJobs(): Promise<RawJobListing[]> {
     return true
   })
 
-  // Only keep roles where estimated comp >= $200k
   const highComp = unique.filter((j) => (j.estimated_comp_high ?? 0) >= 200_000)
-
   console.log(`[wealth:jobs] Done — ${highComp.length} high-comp roles found`)
   return highComp
 }

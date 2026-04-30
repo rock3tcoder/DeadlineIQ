@@ -11,6 +11,160 @@
 import * as cheerio from 'cheerio'
 import type { RawBusinessListing } from './types.js'
 
+// ─── Flippa RSS ───────────────────────────────────────────────────────────────
+
+async function scrapeFlippa(): Promise<RawBusinessListing[]> {
+  const url = 'https://flippa.com/listings.rss'
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/rss+xml,text/xml' },
+      signal: AbortSignal.timeout(20_000),
+    })
+    if (!res.ok) {
+      console.warn(`  [bizbuysell] Flippa RSS HTTP ${res.status}`)
+      return []
+    }
+    const xml = await res.text()
+    const $ = cheerio.load(xml, { xmlMode: true })
+    const results: RawBusinessListing[] = []
+
+    $('item').each((_: number, el: unknown) => {
+      try {
+        const item = $(el)
+        const name = item.find('title').first().text().trim()
+        const link = item.find('link').first().text().trim() || item.find('guid').text().trim()
+        const description = item.find('description').text().replace(/<[^>]+>/g, ' ').trim().slice(0, 400)
+        if (!name || !link) return
+
+        const allText = item.text()
+        const priceMatch = allText.match(/\$?([\d,]+(?:\.\d+)?[KkMm]?)\s*(?:USD|listing price|asking)/i)
+        const askingPrice = priceMatch ? parseNumber(priceMatch[1]) : undefined
+        if (askingPrice && askingPrice > 600_000) return
+
+        const externalId = link.replace(/[^a-z0-9]/gi, '_').slice(-80)
+
+        results.push({
+          opportunity_type: 'acquisition',
+          name,
+          description: description || `${name} — online business for sale on Flippa`,
+          location: 'Remote / Online',
+          source_url: link,
+          source_platform: 'flippa',
+          external_id: externalId,
+          asking_price: askingPrice,
+          business_type: 'online_business',
+        })
+      } catch {
+        // Skip
+      }
+    })
+
+    console.log(`  → Flippa RSS: ${results.length} listings`)
+    return results.slice(0, 20)
+  } catch (err) {
+    console.warn(`  [bizbuysell] Flippa error: ${err instanceof Error ? err.message : err}`)
+    return []
+  }
+}
+
+// ─── BizQuest scraper ─────────────────────────────────────────────────────────
+
+const BIZQUEST_SEARCHES = [
+  { url: 'https://www.bizquest.com/businesses-for-sale/new-york/?MaxPrice=600000', region: 'New York' },
+  { url: 'https://www.bizquest.com/businesses-for-sale/new-jersey/?MaxPrice=600000', region: 'New Jersey' },
+  { url: 'https://www.bizquest.com/businesses-for-sale/connecticut/?MaxPrice=600000', region: 'Connecticut' },
+]
+
+function parseBizQuest(html: string, region: string): RawBusinessListing[] {
+  const $ = cheerio.load(html)
+  const results: RawBusinessListing[] = []
+
+  $('[class*="listing"], .biz-listing, article, .result-item').each((_: number, el: unknown) => {
+    try {
+      const card = $(el)
+      const titleEl = card.find('h2, h3, h4, [class*="title"], [class*="name"]').first()
+      const name = titleEl.text().trim()
+      if (!name || name.length < 5) return
+
+      const href = card.find('a').first().attr('href') ?? ''
+      if (!href) return
+      const sourceUrl = href.startsWith('http') ? href : `https://www.bizquest.com${href}`
+      const externalId = href.replace(/[^a-z0-9]/gi, '_').slice(-80)
+
+      const allText = card.text()
+      const askingMatch = allText.match(/(?:asking|price|listed)[:\s]*\$?([\d,]+[KkMm]?)/i)
+      const cfMatch = allText.match(/(?:cash\s*flow|sde|profit)[:\s]*\$?([\d,]+[KkMm]?)/i)
+      const askingPrice = parseNumber(askingMatch?.[1])
+      const cashFlow = parseNumber(cfMatch?.[1])
+
+      if (askingPrice && askingPrice > 600_000) return
+
+      results.push({
+        opportunity_type: 'acquisition',
+        name,
+        description: card.find('p').first().text().trim().slice(0, 400) || `${name} — available in ${region}`,
+        location: region,
+        source_url: sourceUrl,
+        source_platform: 'bizquest',
+        external_id: externalId,
+        asking_price: askingPrice,
+        cash_flow_annual: cashFlow,
+        business_type: 'unknown',
+      })
+    } catch {
+      // Skip
+    }
+  })
+
+  return results.slice(0, 15)
+}
+
+// ─── BusinessesForSale.com scraper ────────────────────────────────────────────
+
+const BUSINESSES_FOR_SALE_SEARCHES = [
+  { url: 'https://www.businessesforsale.com/new-york-us/businesses-for-sale', region: 'New York' },
+  { url: 'https://www.businessesforsale.com/new-jersey-us/businesses-for-sale', region: 'New Jersey' },
+]
+
+function parseBusinessesForSale(html: string, region: string): RawBusinessListing[] {
+  const $ = cheerio.load(html)
+  const results: RawBusinessListing[] = []
+
+  $('[class*="listing"], [class*="business-card"], article').each((_: number, el: unknown) => {
+    try {
+      const card = $(el)
+      const name = card.find('h2, h3, [class*="title"]').first().text().trim()
+      if (!name || name.length < 5) return
+
+      const href = card.find('a').first().attr('href') ?? ''
+      if (!href) return
+      const sourceUrl = href.startsWith('http') ? href : `https://www.businessesforsale.com${href}`
+      const externalId = href.replace(/[^a-z0-9]/gi, '_').slice(-80)
+
+      const allText = card.text()
+      const askingMatch = allText.match(/(?:asking|price)[:\s]*\$?([\d,]+[KkMm]?)/i)
+      const askingPrice = parseNumber(askingMatch?.[1])
+      if (askingPrice && askingPrice > 600_000) return
+
+      results.push({
+        opportunity_type: 'acquisition',
+        name,
+        description: card.find('p').first().text().trim().slice(0, 400) || `${name} — for sale in ${region}`,
+        location: region,
+        source_url: sourceUrl,
+        source_platform: 'businessesforsale',
+        external_id: externalId,
+        asking_price: askingPrice,
+        business_type: 'unknown',
+      })
+    } catch {
+      // Skip
+    }
+  })
+
+  return results.slice(0, 15)
+}
+
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 
@@ -359,7 +513,7 @@ export async function scrapeBizBuySell(): Promise<RawBusinessListing[]> {
     await delay(1500 + Math.random() * 1000)
   }
 
-  // Craigslist BFS — reliable fallback since they don't block cloud IPs
+  // Craigslist BFS — reliable, doesn't block cloud IPs
   console.log('  → Fetching Craigslist business-for-sale listings...')
   for (const search of CRAIGSLIST_BFS_SEARCHES) {
     const html = await fetchPage(search.url)
@@ -369,6 +523,34 @@ export async function scrapeBizBuySell(): Promise<RawBusinessListing[]> {
       allListings.push(...listings)
     }
     await delay(800 + Math.random() * 400)
+  }
+
+  // Flippa RSS — online businesses
+  const flippaListings = await scrapeFlippa()
+  allListings.push(...flippaListings)
+
+  // BizQuest — sister site to BizBuySell, separate IP blocklist
+  console.log('  → Fetching BizQuest listings...')
+  for (const search of BIZQUEST_SEARCHES) {
+    const html = await fetchPage(search.url)
+    if (html) {
+      const listings = parseBizQuest(html, search.region)
+      console.log(`    BizQuest [${search.region}]: ${listings.length} listings`)
+      allListings.push(...listings)
+    }
+    await delay(1500 + Math.random() * 500)
+  }
+
+  // BusinessesForSale.com — global marketplace
+  console.log('  → Fetching BusinessesForSale.com listings...')
+  for (const search of BUSINESSES_FOR_SALE_SEARCHES) {
+    const html = await fetchPage(search.url)
+    if (html) {
+      const listings = parseBusinessesForSale(html, search.region)
+      console.log(`    BusinessesForSale [${search.region}]: ${listings.length} listings`)
+      allListings.push(...listings)
+    }
+    await delay(1500 + Math.random() * 500)
   }
 
   // Deduplicate by external_id within this batch
