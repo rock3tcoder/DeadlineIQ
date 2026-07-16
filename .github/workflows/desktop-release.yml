@@ -15,6 +15,9 @@ name: Desktop installers
 on:
   push:
     tags: ['v*']
+    # Temporary: lets the CI-restricted remote session trigger installer
+    # builds by pushing to its working branch. Safe to remove.
+    branches: ['claude/intelligent-carson-gcpkbr']
   workflow_dispatch:
 
 permissions:
@@ -48,8 +51,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build without publishing (manual runs)
-        if: github.event_name == 'workflow_dispatch'
+      - name: Build without publishing (manual and branch runs)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         run: npx electron-builder --publish never
 
       - name: Upload installers as workflow artifacts
