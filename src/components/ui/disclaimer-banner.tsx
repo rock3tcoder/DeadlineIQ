@@ -4,22 +4,27 @@ import { PLATFORM_DISCLAIMER } from '@/types'
 
 interface DisclaimerBannerProps {
   className?: string
-  compact?: boolean   // true = single line, false = full paragraph
+  compact?: boolean
 }
 
 export function DisclaimerBanner({ className, compact = false }: DisclaimerBannerProps) {
   return (
     <div
-      className={cn(
-        'flex gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-amber-200/70',
-        className
-      )}
+      className={cn('flex gap-3 rounded-2xl px-4 py-3', className)}
+      style={{
+        background: 'rgba(255,159,10,0.05)',
+        border: '1px solid rgba(255,159,10,0.15)',
+      }}
     >
-      <Info size={16} className="mt-0.5 shrink-0 text-amber-400/70" />
+      <Info size={compact ? 14 : 16} className="mt-0.5 shrink-0" style={{ color: 'rgba(255,159,10,0.60)' }} />
       {compact ? (
-        <p className="text-xs leading-relaxed">{PLATFORM_DISCLAIMER}</p>
+        <p className="text-xs leading-relaxed" style={{ color: 'rgba(235,235,245,0.40)' }}>
+          {PLATFORM_DISCLAIMER}
+        </p>
       ) : (
-        <p className="text-sm leading-relaxed">{PLATFORM_DISCLAIMER}</p>
+        <p className="text-sm leading-relaxed" style={{ color: 'rgba(235,235,245,0.50)' }}>
+          {PLATFORM_DISCLAIMER}
+        </p>
       )}
     </div>
   )

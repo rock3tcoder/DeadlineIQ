@@ -4,19 +4,19 @@ import type { UrgencyLevel } from '@/types'
 const config: Record<UrgencyLevel, { label: string; className: string }> = {
   informational: {
     label: 'Informational',
-    className: 'border-slate-600/40 bg-slate-500/10 text-slate-400',
+    className: 'text-label-secondary bg-white/[0.05] border-white/[0.08]',
   },
   policy_change: {
     label: 'Policy Change',
-    className: 'border-blue-500/30 bg-blue-500/10 text-blue-400',
+    className: 'text-sys-blue border-sys-blue/20 bg-sys-blue/8',
   },
   deadline_based: {
     label: 'Deadline',
-    className: 'border-amber-500/30 bg-amber-500/10 text-amber-400',
+    className: 'text-sys-orange border-sys-orange/20 bg-sys-orange/8',
   },
   high_urgency: {
     label: 'High Urgency',
-    className: 'border-red-500/30 bg-red-500/10 text-red-400',
+    className: 'text-sys-red border-sys-red/20 bg-sys-red/8',
   },
 }
 

@@ -16,6 +16,9 @@
     "resend": "^4.0.0",
     "tsx": "^4.0.0"
   },
+  "engines": {
+    "node": ">=20"
+  },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/node-cron": "^3.0.11",

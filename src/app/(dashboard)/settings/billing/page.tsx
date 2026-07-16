@@ -28,26 +28,26 @@ export default async function BillingPage({ searchParams }: Props) {
     <div className="flex-1 p-6 lg:p-8 space-y-6">
       {/* Header */}
       <header>
-        <h1 className="text-2xl font-bold text-white mb-1">Billing</h1>
-        <p className="text-slate-400 text-sm">
+        <h1 className="text-2xl font-bold text-white heading-tighter mb-1">Billing</h1>
+        <p className="text-label-secondary text-sm">
           Manage your subscription and payment method.
         </p>
       </header>
 
       {/* Post-checkout banners */}
       {params.success && (
-        <div className="flex items-center gap-3 rounded-lg border border-green-500/20 bg-green-500/5 px-4 py-3">
-          <CheckCircle size={15} className="shrink-0 text-green-400" />
-          <p className="text-sm text-green-300">
+        <div className="flex items-center gap-3 rounded-2xl border border-sys-green/20 bg-sys-green/5 px-4 py-3">
+          <CheckCircle size={15} className="shrink-0 text-sys-green" />
+          <p className="text-sm" style={{ color: 'rgba(48,209,88,0.9)' }}>
             <span className="font-semibold">Subscription activated!</span> Welcome aboard — you
             now have full access to your plan.
           </p>
         </div>
       )}
       {params.canceled && (
-        <div className="flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-900 px-4 py-3">
-          <XCircle size={15} className="shrink-0 text-slate-500" />
-          <p className="text-sm text-slate-400">
+        <div className="flex items-center gap-3 rounded-2xl glass px-4 py-3">
+          <XCircle size={15} className="shrink-0 text-label-quaternary" />
+          <p className="text-sm text-label-secondary">
             Checkout was canceled. You can subscribe any time below.
           </p>
         </div>
