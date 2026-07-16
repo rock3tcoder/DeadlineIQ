@@ -3,6 +3,8 @@ import { Info } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
 import { SourceManager } from '@/components/dashboard/source-manager'
 import { DisclaimerBanner } from '@/components/ui/disclaimer-banner'
+import { getEffectivePlan, isOnFreeTrial, type BillingProfile } from '@/lib/plans'
+import { PLANS } from '@/lib/stripe'
 import type { Source } from '@/types'
 
 export default async function MarketsPage() {
@@ -28,10 +30,13 @@ export default async function MarketsPage() {
 
   const subscribedIds = (userSources ?? []).map((r: { source_id: string }) => r.source_id)
 
-  const isTrialing =
-    !profile?.plan ||
-    profile?.subscription_status === 'trialing' ||
-    profile?.subscription_status === null
+  const billing: BillingProfile = {
+    plan: profile?.plan ?? null,
+    subscription_status: profile?.subscription_status ?? null,
+    trial_ends_at: profile?.trial_ends_at ?? null,
+  }
+  const effectivePlan = getEffectivePlan(billing)
+  const onTrial = isOnFreeTrial(billing)
 
   return (
     <div className="flex-1 p-6 lg:p-8 space-y-6">
@@ -44,17 +49,25 @@ export default async function MarketsPage() {
         </p>
       </header>
 
-      {/* Trial banner */}
-      {isTrialing && (
+      {/* Plan status banner */}
+      {onTrial ? (
         <div className="flex items-start gap-3 rounded-lg border border-blue-500/20 bg-blue-500/5 px-4 py-3">
           <Info size={15} className="mt-0.5 shrink-0 text-blue-400" />
           <p className="text-sm text-blue-300">
-            <span className="font-semibold">Free trial — full access.</span> All 20
-            sources are available during your trial. After subscribing, access depends on
-            your plan.
+            <span className="font-semibold">Free trial — full access.</span> All sources
+            are available during your trial. After subscribing, access depends on your plan.
           </p>
         </div>
-      )}
+      ) : effectivePlan ? (
+        <div className="flex items-start gap-3 rounded-lg border border-slate-700 bg-slate-900 px-4 py-3">
+          <Info size={15} className="mt-0.5 shrink-0 text-slate-400" />
+          <p className="text-sm text-slate-400">
+            You&apos;re on the{' '}
+            <span className="font-semibold text-slate-200">{PLANS[effectivePlan].name}</span>{' '}
+            plan. Sources outside your plan are shown locked below.
+          </p>
+        </div>
+      ) : null}
 
       {/* Disclaimer */}
       <DisclaimerBanner compact />
@@ -94,6 +107,7 @@ export default async function MarketsPage() {
         sources={(allSources ?? []) as Source[]}
         subscribedIds={subscribedIds}
         userId={user.id}
+        effectivePlan={effectivePlan}
       />
     </div>
   )

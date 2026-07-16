@@ -1,12 +1,16 @@
 'use client'
 
 import { useState } from 'react'
-import { Plus, X, Check, Loader2 } from 'lucide-react'
+import Link from 'next/link'
+import { Plus, X, Check, Loader2, Lock } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useToast } from '@/hooks/use-toast'
 import { Button } from '@/components/ui/button'
+import { canAccessTag, STARTER_PLATFORM_LIMIT } from '@/lib/plans'
 import { cn } from '@/lib/utils'
-import type { Source, PlatformTag } from '@/types'
+import type { Source, PlatformTag, Plan } from '@/types'
+
+const PLATFORM_TAGS: PlatformTag[] = ['amazon', 'shopify', 'tiktok']
 
 // ─────────────────────────────────────────────
 // Platform badge config
@@ -76,11 +80,14 @@ function SourceCard({
   source,
   isActive,
   isLoading,
+  lockedReason,
   onToggle,
 }: {
   source: Source
   isActive: boolean
   isLoading: boolean
+  /** Non-null when the user's plan doesn't allow adding this source */
+  lockedReason?: string | null
   onToggle: () => void
 }) {
   const platform = platformConfig[source.platform_tag]
@@ -124,32 +131,47 @@ function SourceCard({
       </h4>
 
       {/* Button */}
-      <Button
-        size="sm"
-        variant={isActive ? 'outline' : 'default'}
-        className={cn(
-          'h-8 text-xs w-full mt-auto',
-          isActive
-            ? 'border-slate-700 text-slate-400 hover:border-red-500/40 hover:text-red-400 hover:bg-red-500/5'
-            : 'bg-blue-600 hover:bg-blue-500 text-white'
-        )}
-        onClick={onToggle}
-        disabled={isLoading}
-      >
-        {isLoading ? (
-          <Loader2 size={12} className="animate-spin" />
-        ) : isActive ? (
-          <>
-            <X size={12} className="mr-1.5" />
-            Remove
-          </>
-        ) : (
-          <>
-            <Plus size={12} className="mr-1.5" />
-            Add
-          </>
-        )}
-      </Button>
+      {!isActive && lockedReason ? (
+        <Button
+          asChild
+          size="sm"
+          variant="outline"
+          className="h-8 text-xs w-full mt-auto border-slate-700 text-slate-500 hover:border-blue-500/40 hover:text-blue-400 hover:bg-blue-500/5"
+          title={lockedReason}
+        >
+          <Link href="/settings/billing">
+            <Lock size={12} className="mr-1.5" />
+            Upgrade to add
+          </Link>
+        </Button>
+      ) : (
+        <Button
+          size="sm"
+          variant={isActive ? 'outline' : 'default'}
+          className={cn(
+            'h-8 text-xs w-full mt-auto',
+            isActive
+              ? 'border-slate-700 text-slate-400 hover:border-red-500/40 hover:text-red-400 hover:bg-red-500/5'
+              : 'bg-blue-600 hover:bg-blue-500 text-white'
+          )}
+          onClick={onToggle}
+          disabled={isLoading}
+        >
+          {isLoading ? (
+            <Loader2 size={12} className="animate-spin" />
+          ) : isActive ? (
+            <>
+              <X size={12} className="mr-1.5" />
+              Remove
+            </>
+          ) : (
+            <>
+              <Plus size={12} className="mr-1.5" />
+              Add
+            </>
+          )}
+        </Button>
+      )}
     </div>
   )
 }
@@ -161,12 +183,36 @@ interface SourceManagerProps {
   sources: Source[]
   subscribedIds: string[]
   userId: string
+  /** The plan whose entitlements currently apply (trial = 'business'), or null */
+  effectivePlan: Plan | null
 }
 
-export function SourceManager({ sources, subscribedIds: initialIds, userId }: SourceManagerProps) {
+export function SourceManager({
+  sources,
+  subscribedIds: initialIds,
+  userId,
+  effectivePlan,
+}: SourceManagerProps) {
   const [subscribedIds, setSubscribedIds] = useState<Set<string>>(() => new Set(initialIds))
   const [loadingId, setLoadingId] = useState<string | null>(null)
   const { toast } = useToast()
+
+  // Mirrors the DB policy in migration 005 so users see limits before the
+  // insert is rejected server-side.
+  const lockedReasonFor = (source: Source): string | null => {
+    if (!canAccessTag(effectivePlan, source.platform_tag)) {
+      return 'This source is not included in your current plan.'
+    }
+    if (effectivePlan === 'starter' && PLATFORM_TAGS.includes(source.platform_tag)) {
+      const activePlatformCount = sources.filter(
+        (s) => subscribedIds.has(s.id) && PLATFORM_TAGS.includes(s.platform_tag)
+      ).length
+      if (activePlatformCount >= STARTER_PLATFORM_LIMIT) {
+        return 'The Single Platform plan includes 1 platform. Remove your current platform or upgrade to add more.'
+      }
+    }
+    return null
+  }
 
   const subscribe = async (source: Source) => {
     setLoadingId(source.id)
@@ -187,7 +233,9 @@ export function SourceManager({ sources, subscribedIds: initialIds, userId }: So
       })
       toast({
         title: 'Could not add source',
-        description: error.message,
+        description: error.message.includes('row-level security')
+          ? 'This source is not included in your current plan. Upgrade on the Billing page to add it.'
+          : error.message,
         variant: 'destructive',
       })
     } else {
@@ -287,6 +335,7 @@ export function SourceManager({ sources, subscribedIds: initialIds, userId }: So
                         source={source}
                         isActive={false}
                         isLoading={loadingId === source.id}
+                        lockedReason={lockedReasonFor(source)}
                         onToggle={() => subscribe(source)}
                       />
                     ))}

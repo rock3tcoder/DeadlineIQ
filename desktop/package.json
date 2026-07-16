@@ -1,0 +1,47 @@
+{
+  "name": "deadlineiq-desktop",
+  "productName": "DeadlineIQ",
+  "version": "1.0.0",
+  "description": "DeadlineIQ desktop app — policy change and tax deadline monitoring for e-commerce sellers.",
+  "private": true,
+  "main": "main.js",
+  "author": "DeadlineIQ",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "dist:linux": "electron-builder --linux"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.deadlineiq.desktop",
+    "productName": "DeadlineIQ",
+    "files": [
+      "main.js"
+    ],
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "mac": {
+      "category": "public.app-category.business",
+      "target": "dmg"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "Office"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "rock3tcoder",
+      "repo": "DeadlineIQ"
+    }
+  }
+}

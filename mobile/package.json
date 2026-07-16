@@ -1,0 +1,24 @@
+{
+  "name": "deadlineiq-mobile",
+  "version": "1.0.0",
+  "description": "DeadlineIQ mobile app (iOS + Android) — policy change and tax deadline monitoring for e-commerce sellers.",
+  "private": true,
+  "scripts": {
+    "sync": "cap sync",
+    "assets": "capacitor-assets generate --iconBackgroundColor '#0f172a' --splashBackgroundColor '#020617'",
+    "open:ios": "cap open ios",
+    "open:android": "cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.0.0",
+    "@capacitor/core": "^6.0.0",
+    "@capacitor/ios": "^6.0.0",
+    "@capacitor/push-notifications": "^6.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.0",
+    "@capacitor/cli": "^6.0.0",
+    "@types/node": "^20.19.43",
+    "typescript": "^5.9.3"
+  }
+}

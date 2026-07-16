@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import localFont from 'next/font/local'
 import { Toaster } from '@/components/ui/toaster'
 import './globals.css'
@@ -23,6 +23,18 @@ export const metadata: Metadata = {
     description: 'AI-powered monitoring of policy changes and tax deadlines for e-commerce sellers and SMBs.',
     type: 'website',
   },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'DeadlineIQ',
+  },
+  icons: {
+    apple: '/icons/apple-touch-icon.png',
+  },
+}
+
+export const viewport: Viewport = {
+  themeColor: '#0f172a',
 }
 
 export default function RootLayout({
