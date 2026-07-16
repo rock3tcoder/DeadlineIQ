@@ -75,77 +75,88 @@ function SectionHeader({
   icon: Icon,
   title,
   count,
-  color,
+  accentColor,
+  accentBg,
+  accentBorder,
 }: {
   icon: React.ElementType
   title: string
   count: number
-  color: string
+  accentColor: string
+  accentBg: string
+  accentBorder: string
 }) {
   return (
     <div className="flex items-center gap-3 mb-4">
-      <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${color}`}>
-        <Icon size={15} />
+      <div
+        className="flex h-9 w-9 items-center justify-center rounded-xl"
+        style={{ background: accentBg, border: `1px solid ${accentBorder}` }}
+      >
+        <Icon size={16} style={{ color: accentColor }} />
       </div>
-      <h2 className="text-base font-semibold text-white">{title}</h2>
-      <span className="ml-auto text-xs text-slate-500">{count} listing{count !== 1 ? 's' : ''}</span>
+      <h2 className="text-base font-semibold text-white heading-tight">{title}</h2>
+      <span className="ml-auto text-xs text-label-tertiary">
+        {count} listing{count !== 1 ? 's' : ''}
+      </span>
     </div>
   )
 }
 
 function EmptyState({ message }: { message: string }) {
   return (
-    <div className="rounded-xl border border-dashed border-slate-700 bg-slate-900/30 py-10 text-center">
-      <p className="text-sm text-slate-500">{message}</p>
+    <div className="rounded-2xl border border-dashed border-white/[0.08] py-10 text-center">
+      <p className="text-sm text-label-tertiary">{message}</p>
+    </div>
+  )
+}
+
+function MetricTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl px-3 py-2" style={{ background: 'rgba(255,255,255,0.04)' }}>
+      <p className="text-[10px] text-label-tertiary mb-0.5">{label}</p>
+      <p className="text-sm font-semibold text-white font-mono tabular-nums">{value}</p>
     </div>
   )
 }
 
 function BusinessCard({ b }: { b: WealthBusiness }) {
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap mb-1">
-            <span className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">
-              {b.source}
-            </span>
-            {b.is_passive_eligible && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-green-900/40 px-2 py-0.5 text-[10px] font-semibold text-green-400 border border-green-800/50">
-                <ShieldCheck size={10} />
-                Passive-eligible
-              </span>
-            )}
-            <span className="ml-auto text-[10px] text-slate-600">{timeAgo(b.first_seen_at)}</span>
-          </div>
-          <p className="text-sm font-semibold text-white leading-snug line-clamp-2">{b.title}</p>
-          {b.location && <p className="mt-0.5 text-xs text-slate-500">{b.location}</p>}
-        </div>
+    <div className="glass rounded-2xl p-5 shadow-apple-sm hover:shadow-apple-md transition-shadow duration-200">
+      <div className="flex items-center gap-2 flex-wrap mb-2">
+        <span className="text-[10px] font-medium text-label-tertiary uppercase tracking-wider">
+          {b.source}
+        </span>
+        {b.is_passive_eligible && (
+          <span
+            className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold text-sys-green"
+            style={{ background: 'rgba(48,209,88,0.10)', border: '1px solid rgba(48,209,88,0.22)' }}
+          >
+            <ShieldCheck size={10} />
+            Passive-eligible
+          </span>
+        )}
+        <span className="ml-auto text-[10px] text-label-quaternary">{timeAgo(b.first_seen_at)}</span>
       </div>
 
+      <p className="text-sm font-semibold text-white leading-snug line-clamp-2 heading-tight">{b.title}</p>
+      {b.location && <p className="mt-0.5 text-xs text-label-tertiary">{b.location}</p>}
+
       <div className="mt-4 grid grid-cols-3 gap-2">
-        {[
-          { label: 'Asking', value: fmt(b.asking_price_cents) },
-          { label: 'Cash Flow', value: fmt(b.cash_flow_cents) },
-          { label: 'Revenue', value: fmt(b.revenue_cents) },
-        ].map(({ label, value }) => (
-          <div key={label} className="rounded-lg bg-slate-800/60 px-3 py-2">
-            <p className="text-[10px] text-slate-500 mb-0.5">{label}</p>
-            <p className="text-sm font-semibold text-white font-mono">{value}</p>
-          </div>
-        ))}
+        <MetricTile label="Asking"    value={fmt(b.asking_price_cents)} />
+        <MetricTile label="Cash Flow" value={fmt(b.cash_flow_cents)}    />
+        <MetricTile label="Revenue"   value={fmt(b.revenue_cents)}      />
       </div>
 
       {b.description && (
-        <p className="mt-3 text-xs text-slate-400 line-clamp-2 leading-relaxed">{b.description}</p>
+        <p className="mt-3 text-xs text-label-secondary line-clamp-2 leading-relaxed">{b.description}</p>
       )}
 
-      <div className="mt-4">
+      <div className="mt-4 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
         <Link
           href={b.listing_url}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+          className="inline-flex items-center gap-1.5 text-xs text-sys-blue hover:text-sys-blue/70 transition-colors"
         >
           View listing <ExternalLink size={11} />
         </Link>
@@ -156,40 +167,42 @@ function BusinessCard({ b }: { b: WealthBusiness }) {
 
 function CapitalCard({ c }: { c: WealthCapital }) {
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
-      <div className="flex items-start justify-between gap-3 mb-1">
-        <span className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">{c.source}</span>
-        <span className="text-[10px] text-slate-600">{timeAgo(c.first_seen_at)}</span>
+    <div className="glass rounded-2xl p-5 shadow-apple-sm hover:shadow-apple-md transition-shadow duration-200">
+      <div className="flex items-start justify-between gap-3 mb-2">
+        <span className="text-[10px] font-medium text-label-tertiary uppercase tracking-wider">{c.source}</span>
+        <span className="text-[10px] text-label-quaternary">{timeAgo(c.first_seen_at)}</span>
       </div>
-      <p className="text-sm font-semibold text-white leading-snug">{c.company_name}</p>
-      <div className="mt-1 flex flex-wrap gap-2">
+      <p className="text-sm font-semibold text-white leading-snug heading-tight">{c.company_name}</p>
+
+      <div className="mt-2 flex flex-wrap gap-1.5">
         {c.industry && (
-          <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] text-slate-400">
+          <span className="rounded-full px-2 py-0.5 text-[10px] text-label-secondary"
+            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.07)' }}>
             {c.industry}
           </span>
         )}
         {c.location && (
-          <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] text-slate-400">
+          <span className="rounded-full px-2 py-0.5 text-[10px] text-label-secondary"
+            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.07)' }}>
             {c.location}
           </span>
         )}
       </div>
 
-      <div className="mt-3 rounded-lg bg-slate-800/60 px-3 py-2 inline-block">
-        <p className="text-[10px] text-slate-500 mb-0.5">Amount Seeking</p>
-        <p className="text-sm font-semibold text-white font-mono">{fmt(c.amount_seeking_cents)}</p>
+      <div className="mt-3 inline-block">
+        <MetricTile label="Amount Seeking" value={fmt(c.amount_seeking_cents)} />
       </div>
 
       {c.description && (
-        <p className="mt-3 text-xs text-slate-400 line-clamp-2 leading-relaxed">{c.description}</p>
+        <p className="mt-3 text-xs text-label-secondary line-clamp-2 leading-relaxed">{c.description}</p>
       )}
 
-      <div className="mt-4">
+      <div className="mt-4 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
         <Link
           href={c.listing_url}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+          className="inline-flex items-center gap-1.5 text-xs text-sys-blue hover:text-sys-blue/70 transition-colors"
         >
           View listing <ExternalLink size={11} />
         </Link>
@@ -209,33 +222,33 @@ function JobCard({ j }: { j: WealthJob }) {
         : '—'
 
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
-      <div className="flex items-start justify-between gap-3 mb-1">
-        <span className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">{j.source}</span>
-        <span className="text-[10px] text-slate-600">{timeAgo(j.first_seen_at)}</span>
+    <div className="glass rounded-2xl p-5 shadow-apple-sm hover:shadow-apple-md transition-shadow duration-200">
+      <div className="flex items-start justify-between gap-3 mb-2">
+        <span className="text-[10px] font-medium text-label-tertiary uppercase tracking-wider">{j.source}</span>
+        <span className="text-[10px] text-label-quaternary">{timeAgo(j.first_seen_at)}</span>
       </div>
-      <p className="text-sm font-semibold text-white leading-snug">{j.job_title}</p>
-      {j.company && <p className="mt-0.5 text-xs text-slate-400">{j.company}</p>}
+      <p className="text-sm font-semibold text-white leading-snug heading-tight">{j.job_title}</p>
+      {j.company && <p className="mt-0.5 text-xs text-label-secondary">{j.company}</p>}
 
-      <div className="mt-3 flex items-center gap-3">
-        <div className="rounded-lg bg-green-900/30 border border-green-800/40 px-3 py-2">
-          <p className="text-[10px] text-green-600 mb-0.5">Salary</p>
-          <p className="text-sm font-semibold text-green-400 font-mono">{salRange}</p>
+      <div className="mt-3 flex items-center gap-2 flex-wrap">
+        <div
+          className="rounded-xl px-3 py-2"
+          style={{ background: 'rgba(48,209,88,0.08)', border: '1px solid rgba(48,209,88,0.18)' }}
+        >
+          <p className="text-[10px] text-sys-green/60 mb-0.5">Salary</p>
+          <p className="text-sm font-semibold text-sys-green font-mono tabular-nums">{salRange}</p>
         </div>
         {j.location && (
-          <div className="rounded-lg bg-slate-800/60 px-3 py-2">
-            <p className="text-[10px] text-slate-500 mb-0.5">Location</p>
-            <p className="text-xs font-medium text-white">{j.location}</p>
-          </div>
+          <MetricTile label="Location" value={j.location} />
         )}
       </div>
 
-      <div className="mt-4">
+      <div className="mt-4 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
         <Link
           href={j.listing_url}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+          className="inline-flex items-center gap-1.5 text-xs text-sys-blue hover:text-sys-blue/70 transition-colors"
         >
           View job <ExternalLink size={11} />
         </Link>
@@ -254,7 +267,6 @@ export default async function WealthPage() {
 
   if (!user) redirect('/login')
 
-  // Feature flag: only available when the operator is enabled
   const enabled = process.env.WEALTH_OPERATOR_ENABLED === 'true'
 
   let businesses: WealthBusiness[] = []
@@ -289,18 +301,21 @@ export default async function WealthPage() {
   if (!enabled) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] px-6 text-center">
-        <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl border border-slate-700 bg-slate-800">
-          <Lock size={28} className="text-slate-500" />
+        <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl glass shadow-apple-md">
+          <Lock size={26} className="text-label-tertiary" />
         </div>
-        <h1 className="text-xl font-semibold text-white mb-2">Wealth Operator — Paused</h1>
-        <p className="text-sm text-slate-400 max-w-sm leading-relaxed">
+        <h1 className="text-xl font-semibold text-white heading-tight mb-2">
+          Wealth Operator — Paused
+        </h1>
+        <p className="text-sm text-label-secondary max-w-sm leading-relaxed">
           The autonomous wealth-building system is currently inactive. Set{' '}
-          <code className="rounded bg-slate-800 px-1.5 py-0.5 text-xs text-blue-400">
+          <code className="rounded-lg px-1.5 py-0.5 text-xs text-sys-blue font-mono"
+            style={{ background: 'rgba(10,132,255,0.10)', border: '1px solid rgba(10,132,255,0.18)' }}>
             WEALTH_OPERATOR_ENABLED=true
           </code>{' '}
           in your environment to activate opportunity tracking.
         </p>
-        <p className="mt-4 text-xs text-slate-600">
+        <p className="mt-4 text-xs text-label-quaternary">
           Tracks: business acquisitions · capital injection · NYC $250k+ jobs
         </p>
       </div>
@@ -308,11 +323,11 @@ export default async function WealthPage() {
   }
 
   return (
-    <div className="space-y-10">
+    <div className="flex-1 p-6 lg:p-8 space-y-10">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-white">Wealth Operator</h1>
-        <p className="mt-1 text-sm text-slate-400">
+        <h1 className="text-2xl font-bold text-white heading-tighter">Wealth Operator</h1>
+        <p className="mt-1 text-sm text-label-secondary">
           Autonomous opportunity tracker — business acquisitions, equity plays, and high-salary NYC jobs.
           All outreach is draft only.
         </p>
@@ -324,15 +339,15 @@ export default async function WealthPage() {
           icon={Building2}
           title="Businesses for Sale"
           count={businesses.length}
-          color="border border-blue-500/20 bg-blue-500/10 text-blue-400"
+          accentColor="#0A84FF"
+          accentBg="rgba(10,132,255,0.10)"
+          accentBorder="rgba(10,132,255,0.22)"
         />
         {businesses.length === 0 ? (
           <EmptyState message="No listings discovered yet — the scraper runs daily at 7 AM UTC." />
         ) : (
           <div className="grid gap-4 sm:grid-cols-2">
-            {businesses.map((b) => (
-              <BusinessCard key={b.id} b={b} />
-            ))}
+            {businesses.map((b) => <BusinessCard key={b.id} b={b} />)}
           </div>
         )}
       </section>
@@ -343,15 +358,15 @@ export default async function WealthPage() {
           icon={TrendingUp}
           title="Capital &amp; Equity Opportunities"
           count={capital.length}
-          color="border border-purple-500/20 bg-purple-500/10 text-purple-400"
+          accentColor="#BF5AF2"
+          accentBg="rgba(191,90,242,0.10)"
+          accentBorder="rgba(191,90,242,0.22)"
         />
         {capital.length === 0 ? (
           <EmptyState message="No capital opportunities discovered yet." />
         ) : (
           <div className="grid gap-4 sm:grid-cols-2">
-            {capital.map((c) => (
-              <CapitalCard key={c.id} c={c} />
-            ))}
+            {capital.map((c) => <CapitalCard key={c.id} c={c} />)}
           </div>
         )}
       </section>
@@ -362,21 +377,22 @@ export default async function WealthPage() {
           icon={Briefcase}
           title="NYC Jobs — $250k+"
           count={jobs.length}
-          color="border border-green-500/20 bg-green-500/10 text-green-400"
+          accentColor="#30D158"
+          accentBg="rgba(48,209,88,0.10)"
+          accentBorder="rgba(48,209,88,0.22)"
         />
         {jobs.length === 0 ? (
           <EmptyState message="No $250k+ NYC jobs discovered yet." />
         ) : (
           <div className="grid gap-4 sm:grid-cols-2">
-            {jobs.map((j) => (
-              <JobCard key={j.id} j={j} />
-            ))}
+            {jobs.map((j) => <JobCard key={j.id} j={j} />)}
           </div>
         )}
       </section>
 
       {/* Disclaimer */}
-      <p className="text-xs text-slate-600 leading-relaxed border-t border-slate-800 pt-6">
+      <p className="text-xs text-label-quaternary leading-relaxed pt-6"
+        style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
         This system is for personal informational use only. All outreach emails are generated as drafts and
         must be sent manually. Consult a qualified immigration attorney before acquiring any business or
         making any investment while on an H1B visa.

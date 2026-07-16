@@ -28,35 +28,38 @@ function PlanCard({
   return (
     <div
       className={cn(
-        'relative flex flex-col rounded-xl border p-5 transition-colors',
+        'relative flex flex-col rounded-2xl p-5 transition-all duration-200',
         isActive
-          ? 'border-blue-500/40 bg-blue-500/5'
-          : 'border-slate-800 bg-slate-900'
+          ? 'shadow-glow-blue'
+          : 'glass hover:shadow-apple-sm'
       )}
+      style={isActive
+        ? { background: 'rgba(10,132,255,0.06)', border: '1px solid rgba(10,132,255,0.30)' }
+        : {}}
     >
       {isActive && (
-        <div className="absolute top-4 right-4 flex items-center gap-1 rounded-full bg-blue-600/20 px-2.5 py-1">
-          <Check size={11} className="text-blue-400" />
-          <span className="text-[10px] font-semibold text-blue-400 uppercase tracking-wide">
-            Current plan
+        <div className="absolute top-4 right-4 flex items-center gap-1 rounded-full px-2.5 py-1 bg-sys-blue/15">
+          <Check size={11} className="text-sys-blue" />
+          <span className="text-[10px] font-semibold text-sys-blue uppercase tracking-wider">
+            Current
           </span>
         </div>
       )}
 
-      <div className="mb-4 pr-24">
+      <div className="mb-4 pr-20">
         <h3 className="text-sm font-semibold text-white">{plan.name}</h3>
-        <p className="text-xs text-slate-500 mt-0.5">{plan.description}</p>
+        <p className="text-xs text-label-tertiary mt-0.5">{plan.description}</p>
       </div>
 
       <div className="mb-4">
-        <span className="text-2xl font-bold text-white">{plan.price}</span>
-        <span className="text-slate-500 text-sm ml-1">/mo</span>
+        <span className="text-2xl font-bold text-white heading-tight">{plan.price}</span>
+        <span className="text-label-tertiary text-sm ml-1">/mo</span>
       </div>
 
       <ul className="flex-1 space-y-2 mb-5">
         {plan.features.map((feature) => (
-          <li key={feature} className="flex items-start gap-2 text-xs text-slate-400">
-            <Check size={12} className="mt-0.5 shrink-0 text-blue-400" />
+          <li key={feature} className="flex items-start gap-2 text-xs text-label-secondary">
+            <Check size={12} className="mt-0.5 shrink-0 text-sys-blue" />
             {feature}
           </li>
         ))}
@@ -66,7 +69,7 @@ function PlanCard({
         <Button
           size="sm"
           variant="outline"
-          className="w-full border-slate-700 text-slate-400 cursor-default"
+          className="w-full border-white/[0.08] text-label-tertiary bg-transparent cursor-default"
           disabled
         >
           Active
@@ -74,7 +77,7 @@ function PlanCard({
       ) : (
         <Button
           size="sm"
-          className="w-full bg-blue-600 hover:bg-blue-500 text-white"
+          className="w-full bg-sys-blue hover:bg-sys-blue/80 text-white border-0"
           onClick={() => onUpgrade(planKey)}
           disabled={isLoading || loadingPlan !== null}
         >
@@ -163,8 +166,8 @@ export function BillingPlans({
     <div className="space-y-6">
       {/* Status banner */}
       {isTrialing ? (
-        <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-4 py-3">
-          <p className="text-sm text-blue-300">
+        <div className="rounded-2xl border border-sys-blue/20 bg-sys-blue/5 px-4 py-3">
+          <p className="text-sm text-sys-blue/90">
             <span className="font-semibold">Free trial active.</span>{' '}
             {trialEndFormatted
               ? `Full access until ${trialEndFormatted}. Subscribe before then to keep monitoring.`
@@ -172,15 +175,15 @@ export function BillingPlans({
           </p>
         </div>
       ) : subscriptionStatus === 'past_due' ? (
-        <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-3">
-          <p className="text-sm text-red-300">
+        <div className="rounded-2xl border border-sys-red/20 bg-sys-red/5 px-4 py-3">
+          <p className="text-sm" style={{ color: 'rgba(255,69,58,0.9)' }}>
             <span className="font-semibold">Payment past due.</span> Update your payment method
             to restore access.
           </p>
         </div>
       ) : subscriptionStatus === 'active' ? (
-        <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-4 py-3">
-          <p className="text-sm text-green-300">
+        <div className="rounded-2xl border border-sys-green/20 bg-sys-green/5 px-4 py-3">
+          <p className="text-sm" style={{ color: 'rgba(48,209,88,0.9)' }}>
             <span className="font-semibold">Subscription active.</span> You have full access to
             all features in your plan.
           </p>
@@ -202,17 +205,17 @@ export function BillingPlans({
 
       {/* Manage billing portal */}
       {hasStripeCustomer && (
-        <div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900 px-4 py-3">
+        <div className="flex items-center justify-between rounded-2xl glass px-4 py-3">
           <div>
-            <p className="text-sm font-medium text-slate-200">Billing portal</p>
-            <p className="text-xs text-slate-500 mt-0.5">
+            <p className="text-sm font-medium text-white">Billing portal</p>
+            <p className="text-xs text-label-tertiary mt-0.5">
               Update your payment method, view invoices, or cancel your subscription.
             </p>
           </div>
           <Button
             size="sm"
             variant="outline"
-            className="shrink-0 border-slate-700 text-slate-300 hover:text-white ml-4"
+            className="shrink-0 border-white/[0.08] text-label-secondary hover:text-white ml-4 bg-transparent"
             onClick={handlePortal}
             disabled={portalLoading}
           >
