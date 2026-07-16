@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
+import { hasActiveAccess, type BillingProfile } from '@/lib/plans'
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
@@ -57,6 +58,29 @@ export async function middleware(request: NextRequest) {
     const url = request.nextUrl.clone()
     url.pathname = '/dashboard'
     return NextResponse.redirect(url)
+  }
+
+  // Trial/subscription gate: expired users can only reach /settings
+  // (so they can subscribe or manage billing) — everything else
+  // redirects to the billing page.
+  const isGatedRoute =
+    pathname.startsWith('/dashboard') ||
+    pathname.startsWith('/alerts') ||
+    pathname.startsWith('/markets')
+
+  if (user && isGatedRoute) {
+    const { data: profile } = await supabase
+      .from('users')
+      .select('plan, subscription_status, trial_ends_at')
+      .eq('id', user.id)
+      .single()
+
+    if (profile && !hasActiveAccess(profile as BillingProfile)) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/settings/billing'
+      url.search = '?expired=1'
+      return NextResponse.redirect(url)
+    }
   }
 
   return supabaseResponse

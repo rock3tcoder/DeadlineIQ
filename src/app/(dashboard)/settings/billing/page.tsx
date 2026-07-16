@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { BillingPlans } from '@/components/dashboard/billing-plans'
 
 interface Props {
-  searchParams: Promise<{ success?: string; canceled?: string }>
+  searchParams: Promise<{ success?: string; canceled?: string; expired?: string }>
 }
 
 export default async function BillingPage({ searchParams }: Props) {
@@ -33,6 +33,18 @@ export default async function BillingPage({ searchParams }: Props) {
           Manage your subscription and payment method.
         </p>
       </header>
+
+      {/* Trial expired banner */}
+      {params.expired && (
+        <div className="flex items-center gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3">
+          <XCircle size={15} className="shrink-0 text-amber-400" />
+          <p className="text-sm text-amber-300">
+            <span className="font-semibold">Your free trial has ended.</span> Choose a plan
+            below to keep monitoring your sources — your saved sources and update history are
+            still here.
+          </p>
+        </div>
+      )}
 
       {/* Post-checkout banners */}
       {params.success && (

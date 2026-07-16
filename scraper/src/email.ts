@@ -1,5 +1,6 @@
 import { Resend } from 'resend'
 import db from './db.js'
+import { canReceiveForTag, type BillingUser } from './entitlements.js'
 
 if (!process.env.RESEND_API_KEY) {
   console.warn('[email] RESEND_API_KEY not set — emails will be skipped.')
@@ -227,7 +228,7 @@ export async function sendInstantAlert(
     deadline_date: string | null
     effective_date: string | null
   },
-  source: { id: string; name: string }
+  source: { id: string; name: string; platform_tag: string }
 ): Promise<void> {
   if (!resend) {
     console.log('  [email] Skipped — RESEND_API_KEY not configured')
@@ -241,10 +242,10 @@ export async function sendInstantAlert(
     return
   }
 
-  // Fetch subscribers for this source
+  // Fetch subscribers for this source (with billing info for entitlement checks)
   const { data: subs, error } = await db
     .from('user_sources')
-    .select('users(id, email, full_name)')
+    .select('users(id, email, full_name, plan, subscription_status, trial_ends_at)')
     .eq('source_id', source.id)
 
   if (error) {
@@ -262,8 +263,13 @@ export async function sendInstantAlert(
 
   let sent = 0
   for (const sub of subs) {
-    const user = sub.users as unknown as { id: string; email: string; full_name: string | null } | null
+    const user = sub.users as unknown as
+      | ({ id: string; email: string; full_name: string | null } & BillingUser)
+      | null
     if (!user?.email) continue
+
+    // Skip users whose trial expired or whose plan doesn't cover this source
+    if (!canReceiveForTag(user, source.platform_tag)) continue
 
     const { error: sendError } = await resend.emails.send({
       from: FROM,
@@ -301,7 +307,7 @@ export async function sendWeeklyDigest(): Promise<void> {
   // Load all updates from the past 7 days, with source info
   const { data: recentUpdates, error: updatesError } = await db
     .from('updates')
-    .select('id, title, summary, urgency_level, source_url, deadline_date, source_id, sources(name)')
+    .select('id, title, summary, urgency_level, source_url, deadline_date, source_id, sources(name, platform_tag)')
     .gte('created_at', sevenDaysAgo)
     .order('created_at', { ascending: false })
 
@@ -318,7 +324,7 @@ export async function sendWeeklyDigest(): Promise<void> {
   // Load all users who have at least one source subscription
   const { data: activeUsers, error: usersError } = await db
     .from('user_sources')
-    .select('user_id, source_id, users(id, email, full_name)')
+    .select('user_id, source_id, users(id, email, full_name, plan, subscription_status, trial_ends_at)')
 
   if (usersError) {
     console.error('[digest] Failed to load active users:', usersError.message)
@@ -332,15 +338,26 @@ export async function sendWeeklyDigest(): Promise<void> {
 
   // Build a map: userId → Set of subscribed source IDs
   const userSourceMap = new Map<string, Set<string>>()
-  const userInfoMap = new Map<string, { email: string; full_name: string | null }>()
+  const userInfoMap = new Map<
+    string,
+    { email: string; full_name: string | null } & BillingUser
+  >()
 
   for (const row of activeUsers) {
-    const user = row.users as unknown as { id: string; email: string; full_name: string | null } | null
+    const user = row.users as unknown as
+      | ({ id: string; email: string; full_name: string | null } & BillingUser)
+      | null
     if (!user?.email) continue
 
     if (!userSourceMap.has(user.id)) {
       userSourceMap.set(user.id, new Set())
-      userInfoMap.set(user.id, { email: user.email, full_name: user.full_name })
+      userInfoMap.set(user.id, {
+        email: user.email,
+        full_name: user.full_name,
+        plan: user.plan,
+        subscription_status: user.subscription_status,
+        trial_ends_at: user.trial_ends_at,
+      })
     }
     userSourceMap.get(user.id)!.add(row.source_id as string)
   }
@@ -351,9 +368,13 @@ export async function sendWeeklyDigest(): Promise<void> {
     const userInfo = userInfoMap.get(userId)
     if (!userInfo) continue
 
-    // Filter updates to only those for this user's sources
+    // Filter updates to this user's sources, respecting plan entitlements
     const relevantUpdates = recentUpdates
-      .filter((u) => subscribedSourceIds.has(u.source_id as string))
+      .filter((u) => {
+        if (!subscribedSourceIds.has(u.source_id as string)) return false
+        const src = u.sources as unknown as { name: string; platform_tag: string } | null
+        return canReceiveForTag(userInfo, src?.platform_tag ?? '')
+      })
       .map((u) => ({
         title: u.title as string,
         summary: u.summary as string,
@@ -382,4 +403,113 @@ export async function sendWeeklyDigest(): Promise<void> {
   }
 
   console.log(`[digest] Weekly digest sent to ${sent} user(s)`)
+}
+
+// ─────────────────────────────────────────────
+// Deadline reminder HTML template (14-day / 3-day)
+// ─────────────────────────────────────────────
+function buildReminderHtml(
+  update: {
+    title: string
+    summary: string
+    deadline_date: string
+    source_url: string
+  },
+  sourceName: string,
+  userName: string | null,
+  daysLeft: number
+): string {
+  const greeting = userName ? `Hi ${userName.split(' ')[0]},` : 'Hi there,'
+  const urgencyColor = daysLeft <= 3 ? '#ef4444' : '#f59e0b'
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Deadline reminder: ${update.title}</title></head>
+<body style="margin:0;padding:0;background:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f172a;padding:40px 16px">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
+
+        <!-- Logo -->
+        <tr><td style="padding-bottom:24px">
+          <span style="font-size:18px;font-weight:700;color:#fff;letter-spacing:-.3px">Deadline<span style="color:#3b82f6">IQ</span></span>
+        </td></tr>
+
+        <!-- Card -->
+        <tr><td style="background:#1e293b;border-radius:12px;padding:28px 32px;border:1px solid #334155">
+
+          <!-- Source + countdown -->
+          <p style="margin:0 0 12px;font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.06em">${sourceName}</p>
+          <span style="display:inline-block;padding:2px 10px;border-radius:999px;font-size:11px;font-weight:600;color:#fff;background:${urgencyColor}">${daysLeft} day${daysLeft === 1 ? '' : 's'} until deadline</span>
+
+          <!-- Title -->
+          <h1 style="margin:14px 0 12px;font-size:20px;font-weight:700;color:#f1f5f9;line-height:1.3">${update.title}</h1>
+
+          <!-- Greeting -->
+          <p style="margin:0 0 16px;font-size:14px;color:#94a3b8">${greeting} a deadline you're tracking is coming up.</p>
+
+          <!-- Deadline -->
+          <p style="margin:0 0 16px;font-size:15px;color:${urgencyColor}"><strong>Deadline date: ${update.deadline_date}</strong> (according to information available at detection time — always verify with the official source, as dates may change)</p>
+
+          <!-- Summary -->
+          <p style="margin:0;font-size:15px;color:#cbd5e1;line-height:1.6">${update.summary}</p>
+
+          <!-- CTA -->
+          <div style="margin-top:24px">
+            <a href="${update.source_url}" style="display:inline-block;padding:10px 20px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600;margin-right:10px">View Official Source</a>
+            <a href="${APP_URL}/dashboard" style="display:inline-block;padding:10px 20px;background:#1e293b;border:1px solid #334155;color:#94a3b8;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600">Open Dashboard</a>
+          </div>
+
+        </td></tr>
+
+        <!-- Disclaimer -->
+        <tr><td style="padding:20px 0 0">
+          <p style="margin:0;font-size:11px;color:#475569;line-height:1.5">${DISCLAIMER}</p>
+          <p style="margin:8px 0 0;font-size:11px;color:#334155">
+            You received this because you subscribed to ${sourceName} on DeadlineIQ.
+            <a href="${APP_URL}/markets" style="color:#475569">Manage sources</a>
+          </p>
+        </td></tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`
+}
+
+// ─────────────────────────────────────────────
+// Send one deadline reminder email
+// Returns true on success, false on failure/skip.
+// ─────────────────────────────────────────────
+export async function sendDeadlineReminderEmail(
+  to: string,
+  userName: string | null,
+  update: {
+    title: string
+    summary: string
+    deadline_date: string
+    source_url: string
+  },
+  sourceName: string,
+  daysLeft: number
+): Promise<boolean> {
+  if (!resend) {
+    console.log('  [reminder] Skipped — RESEND_API_KEY not configured')
+    return false
+  }
+
+  const { error } = await resend.emails.send({
+    from: FROM,
+    to,
+    subject: `[Deadline in ${daysLeft} day${daysLeft === 1 ? '' : 's'}] ${update.title}`,
+    html: buildReminderHtml(update, sourceName, userName, daysLeft),
+  })
+
+  if (error) {
+    console.error(`  [reminder] Failed to send to ${to}:`, error.message)
+    return false
+  }
+
+  return true
 }

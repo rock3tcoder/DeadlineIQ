@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { DashboardShell } from '@/components/dashboard/dashboard-shell'
+import { trialDaysRemaining, type BillingProfile } from '@/lib/plans'
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient()
@@ -14,7 +15,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // Fetch the extended profile from our users table
   const { data: profile } = await supabase
     .from('users')
-    .select('id, email, full_name, plan')
+    .select('id, email, full_name, plan, subscription_status, trial_ends_at')
     .eq('id', user.id)
     .single()
 
@@ -25,5 +26,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
     plan: profile?.plan ?? null,
   }
 
-  return <DashboardShell user={userProfile}>{children}</DashboardShell>
+  const trialDaysLeft = profile ? trialDaysRemaining(profile as BillingProfile) : null
+
+  return (
+    <DashboardShell user={userProfile} trialDaysLeft={trialDaysLeft}>
+      {children}
+    </DashboardShell>
+  )
 }
