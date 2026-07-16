@@ -89,6 +89,10 @@ The worker scrapes on startup and then on a schedule:
 
 **Email (Resend):** verify your sending domain, then set `RESEND_FROM_EMAIL` to an address on it.
 
+## Installable app (PWA)
+
+DeadlineIQ ships a web app manifest (`src/app/manifest.ts`) and icons (`public/icons/`), so once deployed over HTTPS users can install it as an app: **Install app** from the address bar in Chrome/Edge on desktop, or **Add to Home Screen** on iOS/Android. The installed app opens straight to the dashboard in a standalone window.
+
 ## Pre-launch checklist
 
 - [ ] Replace the placeholders in `src/app/terms/page.tsx` and `src/app/privacy/page.tsx` (company name, state) and have an attorney review both.
