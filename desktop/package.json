@@ -37,6 +37,11 @@
     "linux": {
       "target": "AppImage",
       "category": "Office"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "rock3tcoder",
+      "repo": "DeadlineIQ"
     }
   }
 }

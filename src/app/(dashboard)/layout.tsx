@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { DashboardShell } from '@/components/dashboard/dashboard-shell'
+import { PushRegistration } from '@/components/dashboard/push-registration'
 import { trialDaysRemaining, type BillingProfile } from '@/lib/plans'
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -30,6 +31,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <DashboardShell user={userProfile} trialDaysLeft={trialDaysLeft}>
+      <PushRegistration />
       {children}
     </DashboardShell>
   )

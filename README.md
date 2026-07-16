@@ -102,6 +102,10 @@ Because auth, billing, and data all live server-side, the native apps are thin s
 
 Both default to `https://deadlineiq.com` and can be pointed at staging or local dev with the `DEADLINEIQ_URL` environment variable. Installers must be built on their target platform (Apple requires a Mac for iOS/macOS builds; store distribution additionally requires code signing).
 
+**Automated desktop builds:** pushing a tag like `v1.0.0` triggers `.github/workflows/desktop-release.yml`, which builds the `.dmg`, `.exe`, and `.AppImage` on GitHub's runners and attaches them to a draft GitHub Release — no local build machines needed.
+
+**Mobile push notifications:** urgent policy alerts are delivered as native push to the mobile apps via Firebase Cloud Messaging. Device tokens are registered by the web app when it runs inside the native shell (migration 006), and the scraper sends alongside email alerts. Setup steps are in `mobile/README.md`; everything no-ops until `FIREBASE_SERVICE_ACCOUNT` is configured.
+
 ## Pre-launch checklist
 
 - [ ] Replace the placeholders in `src/app/terms/page.tsx` and `src/app/privacy/page.tsx` (company name, state) and have an attorney review both.

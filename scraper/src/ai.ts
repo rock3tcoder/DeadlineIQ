@@ -1,6 +1,7 @@
 import OpenAI from 'openai'
 import db from './db.js'
 import { sendInstantAlert } from './email.js'
+import { sendPushAlert } from './push.js'
 
 if (!process.env.OPENAI_API_KEY) {
   console.warn('[ai] OPENAI_API_KEY not set — AI analysis will be skipped.')
@@ -182,6 +183,16 @@ async function saveUpdate(
       source_url: sourceUrl,
       deadline_date: analysis.deadline_date ?? null,
       effective_date: analysis.effective_date ?? null,
+    },
+    source
+  )
+
+  // Push to mobile devices (no-op unless FIREBASE_SERVICE_ACCOUNT is set)
+  await sendPushAlert(
+    {
+      title: analysis.title,
+      summary: analysis.summary,
+      urgency_level: analysis.urgency_level,
     },
     source
   )

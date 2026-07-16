@@ -25,3 +25,10 @@ npm run dist:linux    # .AppImage
 Output lands in `desktop/dist/`. `build/icon.png` is the single 1024px source icon; electron-builder derives all platform formats from it.
 
 For store distribution or auto-update you'll additionally want code signing (`CSC_LINK`/`CSC_KEY_PASSWORD` for macOS/Windows) — see the [electron-builder docs](https://www.electron.build/code-signing).
+
+## Automated builds (CI)
+
+`.github/workflows/desktop-release.yml` builds all three installers on GitHub's macOS/Windows/Linux runners:
+
+- **Push a tag** (`git tag v1.0.0 && git push origin v1.0.0`) → installers are attached to a draft GitHub Release for that tag; review and publish it.
+- **Manual run** (Actions → Desktop installers → Run workflow) → installers are uploaded as downloadable workflow artifacts, no release created.
