@@ -93,6 +93,15 @@ The worker scrapes on startup and then on a schedule:
 
 DeadlineIQ ships a web app manifest (`src/app/manifest.ts`) and icons (`public/icons/`), so once deployed over HTTPS users can install it as an app: **Install app** from the address bar in Chrome/Edge on desktop, or **Add to Home Screen** on iOS/Android. The installed app opens straight to the dashboard in a standalone window.
 
+## Native desktop & mobile apps
+
+Because auth, billing, and data all live server-side, the native apps are thin shells around the deployed web app:
+
+- **`/desktop`** — Electron app for Windows (`.exe`), macOS (`.dmg`), and Linux (`.AppImage`). `npm install && npm start` to run; `npm run dist` to build the installer for the current OS. See `desktop/README.md`.
+- **`/mobile`** — Capacitor app for iOS and Android, ready for the App Store / Play Store. `npm install && npx cap add ios android` then build in Xcode / Android Studio. See `mobile/README.md`.
+
+Both default to `https://deadlineiq.com` and can be pointed at staging or local dev with the `DEADLINEIQ_URL` environment variable. Installers must be built on their target platform (Apple requires a Mac for iOS/macOS builds; store distribution additionally requires code signing).
+
 ## Pre-launch checklist
 
 - [ ] Replace the placeholders in `src/app/terms/page.tsx` and `src/app/privacy/page.tsx` (company name, state) and have an attorney review both.
