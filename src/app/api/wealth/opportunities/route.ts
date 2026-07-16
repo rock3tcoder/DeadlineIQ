@@ -1,50 +1,65 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
-import { createClient as createServiceClient } from '@supabase/supabase-js'
+import { createClient } from '@supabase/supabase-js'
 
-// Wealth data lives in a dedicated Supabase project
-const wealthDb = createServiceClient(
-  process.env.WEALTH_SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? '',
-  process.env.WEALTH_SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
-  { auth: { persistSession: false } },
-)
+// Service-role client — this route is admin-only (no user RLS needed)
+function getDb() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!url || !key) throw new Error('Supabase env vars missing')
+  return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } })
+}
 
-export async function GET() {
-  const supabase = await createClient()
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url)
+  const category = searchParams.get('category') ?? 'all'
+  const limit = Math.min(Math.max(parseInt(searchParams.get('limit') ?? '50'), 1), 100)
+  const offset = Math.max(parseInt(searchParams.get('offset') ?? '0'), 0)
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  let db: ReturnType<typeof getDb>
+  try {
+    db = getDb()
+  } catch {
+    return NextResponse.json({ error: 'Service unavailable' }, { status: 503 })
   }
 
-  // Fetch opportunities — newest first, best grades first
-  const { data: opportunities, error: oppError } = await wealthDb
-    .from('wealth_opportunities')
-    .select('*')
-    .neq('status', 'passed')
-    .order('found_at', { ascending: false })
-    .limit(200)
+  const result: Record<string, unknown> = {}
 
-  if (oppError) {
-    return NextResponse.json({ error: oppError.message }, { status: 500 })
+  if (category === 'all' || category === 'business') {
+    const { data, error, count } = await db
+      .from('wealth_businesses')
+      .select('*', { count: 'exact' })
+      .order('first_seen_at', { ascending: false })
+      .range(offset, offset + limit - 1)
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    result.businesses = data ?? []
+    result.businesses_total = count ?? 0
   }
 
-  // Fetch outreach drafts
-  const { data: outreach, error: outreachError } = await wealthDb
-    .from('wealth_outreach')
-    .select('*')
-    .is('sent_at', null)
-    .order('created_at', { ascending: true })
+  if (category === 'all' || category === 'capital') {
+    const { data, error, count } = await db
+      .from('wealth_capital_opportunities')
+      .select('*', { count: 'exact' })
+      .order('first_seen_at', { ascending: false })
+      .range(offset, offset + limit - 1)
 
-  if (outreachError) {
-    return NextResponse.json({ error: outreachError.message }, { status: 500 })
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    result.capital = data ?? []
+    result.capital_total = count ?? 0
   }
 
-  return NextResponse.json({
-    opportunities: opportunities ?? [],
-    outreach: outreach ?? [],
-  })
+  if (category === 'all' || category === 'job') {
+    const { data, error, count } = await db
+      .from('wealth_jobs')
+      .select('*', { count: 'exact' })
+      .order('salary_max_cents', { ascending: false, nullsFirst: false })
+      .order('first_seen_at', { ascending: false })
+      .range(offset, offset + limit - 1)
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    result.jobs = data ?? []
+    result.jobs_total = count ?? 0
+  }
+
+  return NextResponse.json(result)
 }

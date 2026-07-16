@@ -1,571 +1,194 @@
-/**
- * BizBuySell scraper
- *
- * Scrapes business-for-sale listings that match our acquisition criteria:
- *  - Asking price ≤ $500k
- *  - Preferred types: car washes, laundromats, vending, self-storage,
- *    home services, B2B services, parking, ATM routes
- *  - Locations: New York, New Jersey, Connecticut
- */
-
 import * as cheerio from 'cheerio'
-import type { RawBusinessListing } from './types.js'
+import { upsertBusiness, type WealthBusiness } from './db.js'
 
-// ─── Flippa RSS ───────────────────────────────────────────────────────────────
-
-async function scrapeFlippa(): Promise<RawBusinessListing[]> {
-  const url = 'https://flippa.com/listings.rss'
-  try {
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/rss+xml,text/xml' },
-      signal: AbortSignal.timeout(20_000),
-    })
-    if (!res.ok) {
-      console.warn(`  [bizbuysell] Flippa RSS HTTP ${res.status}`)
-      return []
-    }
-    const xml = await res.text()
-    const $ = cheerio.load(xml, { xmlMode: true })
-    const results: RawBusinessListing[] = []
-
-    $('item').each((_: number, el: unknown) => {
-      try {
-        const item = $(el)
-        const name = item.find('title').first().text().trim()
-        const link = item.find('link').first().text().trim() || item.find('guid').text().trim()
-        const description = item.find('description').text().replace(/<[^>]+>/g, ' ').trim().slice(0, 400)
-        if (!name || !link) return
-
-        const allText = item.text()
-        const priceMatch = allText.match(/\$?([\d,]+(?:\.\d+)?[KkMm]?)\s*(?:USD|listing price|asking)/i)
-        const askingPrice = priceMatch ? parseNumber(priceMatch[1]) : undefined
-        if (askingPrice && askingPrice > 600_000) return
-
-        const externalId = link.replace(/[^a-z0-9]/gi, '_').slice(-80)
-
-        results.push({
-          opportunity_type: 'acquisition',
-          name,
-          description: description || `${name} — online business for sale on Flippa`,
-          location: 'Remote / Online',
-          source_url: link,
-          source_platform: 'flippa',
-          external_id: externalId,
-          asking_price: askingPrice,
-          business_type: 'online_business',
-        })
-      } catch {
-        // Skip
-      }
-    })
-
-    console.log(`  → Flippa RSS: ${results.length} listings`)
-    return results.slice(0, 20)
-  } catch (err) {
-    console.warn(`  [bizbuysell] Flippa error: ${err instanceof Error ? err.message : err}`)
-    return []
-  }
-}
-
-// ─── BizQuest scraper ─────────────────────────────────────────────────────────
-
-const BIZQUEST_SEARCHES = [
-  { url: 'https://www.bizquest.com/businesses-for-sale/new-york/?MaxPrice=600000', region: 'New York' },
-  { url: 'https://www.bizquest.com/businesses-for-sale/new-jersey/?MaxPrice=600000', region: 'New Jersey' },
-  { url: 'https://www.bizquest.com/businesses-for-sale/connecticut/?MaxPrice=600000', region: 'Connecticut' },
+// Keywords that indicate a business can be run without daily owner presence —
+// critical for H1B passive-ownership eligibility.
+const PASSIVE_KEYWORDS = [
+  'absentee',
+  'passive',
+  'semi-absentee',
+  'turnkey',
+  'turn-key',
+  'manager run',
+  'manager-run',
+  'managed',
+  'online',
+  'ecommerce',
+  'e-commerce',
+  'saas',
+  'digital',
+  'remote',
+  'recurring revenue',
+  'subscription',
+  'automated',
+  'no owner involvement',
+  'low owner',
+  'owner not required',
+  'investor friendly',
 ]
 
-function parseBizQuest(html: string, region: string): RawBusinessListing[] {
-  const $ = cheerio.load(html)
-  const results: RawBusinessListing[] = []
-
-  $('[class*="listing"], .biz-listing, article, .result-item').each((_: number, el: unknown) => {
-    try {
-      const card = $(el)
-      const titleEl = card.find('h2, h3, h4, [class*="title"], [class*="name"]').first()
-      const name = titleEl.text().trim()
-      if (!name || name.length < 5) return
-
-      const href = card.find('a').first().attr('href') ?? ''
-      if (!href) return
-      const sourceUrl = href.startsWith('http') ? href : `https://www.bizquest.com${href}`
-      const externalId = href.replace(/[^a-z0-9]/gi, '_').slice(-80)
-
-      const allText = card.text()
-      const askingMatch = allText.match(/(?:asking|price|listed)[:\s]*\$?([\d,]+[KkMm]?)/i)
-      const cfMatch = allText.match(/(?:cash\s*flow|sde|profit)[:\s]*\$?([\d,]+[KkMm]?)/i)
-      const askingPrice = parseNumber(askingMatch?.[1])
-      const cashFlow = parseNumber(cfMatch?.[1])
-
-      if (askingPrice && askingPrice > 600_000) return
-
-      results.push({
-        opportunity_type: 'acquisition',
-        name,
-        description: card.find('p').first().text().trim().slice(0, 400) || `${name} — available in ${region}`,
-        location: region,
-        source_url: sourceUrl,
-        source_platform: 'bizquest',
-        external_id: externalId,
-        asking_price: askingPrice,
-        cash_flow_annual: cashFlow,
-        business_type: 'unknown',
-      })
-    } catch {
-      // Skip
-    }
-  })
-
-  return results.slice(0, 15)
-}
-
-// ─── BusinessesForSale.com scraper ────────────────────────────────────────────
-
-const BUSINESSES_FOR_SALE_SEARCHES = [
-  { url: 'https://www.businessesforsale.com/new-york-us/businesses-for-sale', region: 'New York' },
-  { url: 'https://www.businessesforsale.com/new-jersey-us/businesses-for-sale', region: 'New Jersey' },
+const SEARCH_URLS = [
+  // Absentee / passive ownership nationally — best fit for H1B
+  'https://www.bizbuysell.com/businesses-for-sale/?q=absentee+owner&p=1',
+  'https://www.bizbuysell.com/businesses-for-sale/?q=semi-absentee&p=1',
+  'https://www.bizbuysell.com/businesses-for-sale/?q=passive+income&p=1',
+  // Online / SaaS — geographically flexible, typically absentee
+  'https://www.bizbuysell.com/internet-businesses-for-sale/?p=1',
+  // NY metro, affordable asking price (≤ $500k reachable with $50k down + SBA)
+  'https://www.bizbuysell.com/new-york-businesses-for-sale/?max_asking_price=500000&p=1',
 ]
-
-function parseBusinessesForSale(html: string, region: string): RawBusinessListing[] {
-  const $ = cheerio.load(html)
-  const results: RawBusinessListing[] = []
-
-  $('[class*="listing"], [class*="business-card"], article').each((_: number, el: unknown) => {
-    try {
-      const card = $(el)
-      const name = card.find('h2, h3, [class*="title"]').first().text().trim()
-      if (!name || name.length < 5) return
-
-      const href = card.find('a').first().attr('href') ?? ''
-      if (!href) return
-      const sourceUrl = href.startsWith('http') ? href : `https://www.businessesforsale.com${href}`
-      const externalId = href.replace(/[^a-z0-9]/gi, '_').slice(-80)
-
-      const allText = card.text()
-      const askingMatch = allText.match(/(?:asking|price)[:\s]*\$?([\d,]+[KkMm]?)/i)
-      const askingPrice = parseNumber(askingMatch?.[1])
-      if (askingPrice && askingPrice > 600_000) return
-
-      results.push({
-        opportunity_type: 'acquisition',
-        name,
-        description: card.find('p').first().text().trim().slice(0, 400) || `${name} — for sale in ${region}`,
-        location: region,
-        source_url: sourceUrl,
-        source_platform: 'businessesforsale',
-        external_id: externalId,
-        asking_price: askingPrice,
-        business_type: 'unknown',
-      })
-    } catch {
-      // Skip
-    }
-  })
-
-  return results.slice(0, 15)
-}
-
-const USER_AGENT =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-
-const SEARCH_CONFIGS = [
-  // General small businesses — NY, NJ, CT under $500k
-  {
-    url: 'https://www.bizbuysell.com/businesses-for-sale/?q=&l=New+York%2C+NY&price_max=500000&cf_min=30000&p=1',
-    type: 'general',
-  },
-  {
-    url: 'https://www.bizbuysell.com/businesses-for-sale/?q=&l=New+Jersey&price_max=500000&cf_min=30000&p=1',
-    type: 'general',
-  },
-  {
-    url: 'https://www.bizbuysell.com/businesses-for-sale/?q=&l=Connecticut&price_max=500000&cf_min=30000&p=1',
-    type: 'general',
-  },
-  // Preferred category searches
-  {
-    url: 'https://www.bizbuysell.com/car-washes-for-sale/?l=New+York&price_max=500000',
-    type: 'car_wash',
-  },
-  {
-    url: 'https://www.bizbuysell.com/laundromats-for-sale/?l=New+York&price_max=500000',
-    type: 'laundromat',
-  },
-  {
-    url: 'https://www.bizbuysell.com/vending-businesses-for-sale/?l=New+York&price_max=500000',
-    type: 'vending',
-  },
-  {
-    url: 'https://www.bizbuysell.com/self-storage-businesses-for-sale/?l=New+York',
-    type: 'self_storage',
-  },
-  {
-    url: 'https://www.bizbuysell.com/parking-lots-for-sale/?l=New+York',
-    type: 'parking',
-  },
-  {
-    url: 'https://www.bizbuysell.com/home-services-businesses-for-sale/?l=New+York&price_max=500000',
-    type: 'home_services',
-  },
-  // Empire Flippers — online/ecommerce cash-flowing businesses
-  {
-    url: 'https://empireflippers.com/marketplace/?business_type=content&business_type=ecommerce&monetization_type=display_ads&monetization_type=affiliate&monetization_type=ecommerce&minimum_monthly_net_profit=2500&maximum_listing_price=500000',
-    type: 'online_business',
-    platform: 'empireflippers',
-  },
-]
-
-// ─── HTTP helper ──────────────────────────────────────────────────────────────
 
 async function fetchPage(url: string): Promise<string | null> {
   try {
     const res = await fetch(url, {
       headers: {
-        'User-Agent': USER_AGENT,
+        'User-Agent':
+          'Mozilla/5.0 (compatible; DeadlineIQ-Bot/1.0; +https://deadlineiq.com/bot)',
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.5',
-        'Cache-Control': 'no-cache',
       },
       signal: AbortSignal.timeout(30_000),
     })
-
-    if (!res.ok) {
-      console.warn(`  [bizbuysell] HTTP ${res.status} — ${url}`)
-      return null
-    }
+    if (!res.ok) return null
     return await res.text()
-  } catch (err) {
-    console.warn(`  [bizbuysell] Fetch error: ${err instanceof Error ? err.message : err}`)
+  } catch {
     return null
   }
 }
 
-// ─── Price / number parser ────────────────────────────────────────────────────
-
-function parseNumber(text: string | undefined): number | undefined {
-  if (!text) return undefined
-  const clean = text.replace(/[$,\s]/g, '').replace(/[KkMm]$/, (s) =>
-    s.toLowerCase() === 'k' ? '000' : '000000'
-  )
-  const n = parseFloat(clean)
-  return isNaN(n) ? undefined : n
+function parseDollars(text: string): number | null {
+  if (!text) return null
+  const lower = text.toLowerCase().trim()
+  const clean = lower.replace(/[$,\s]/g, '')
+  const num = parseFloat(clean)
+  if (isNaN(num) || num <= 0) return null
+  if (lower.includes('m') || lower.endsWith('m')) return Math.round(num * 1_000_000 * 100)
+  if (lower.includes('k') || lower.endsWith('k')) return Math.round(num * 1_000 * 100)
+  return Math.round(num * 100)
 }
 
-// ─── BizBuySell listing parser ────────────────────────────────────────────────
+function isPassiveEligible(title: string, description: string): boolean {
+  const text = `${title} ${description}`.toLowerCase()
+  return PASSIVE_KEYWORDS.some((kw) => text.includes(kw))
+}
 
-function parseBizBuySellListings(
-  html: string,
-  businessType: string,
-  pageUrl: string
-): RawBusinessListing[] {
+function scrapePage(html: string): WealthBusiness[] {
   const $ = cheerio.load(html)
-  const results: RawBusinessListing[] = []
+  const results: WealthBusiness[] = []
 
-  // BizBuySell listing cards — selector patterns (robust to minor HTML changes)
-  const cardSelectors = [
-    '.listing-item',
-    '[class*="listing-item"]',
-    '.result',
+  // BizBuySell uses several class names across versions — match all
+  const selectors = [
     '[data-testid="listing-card"]',
+    '.listings article',
+    '.listing-card',
+    '.bfs-listing',
+    'article.listing',
+    '.serp-card',
   ]
 
-  let cards = $()
-  for (const sel of cardSelectors) {
-    const found = $(sel)
-    if (found.length > 0) {
-      cards = found
-      break
-    }
-  }
+  $(selectors.join(', ')).each((_, el) => {
+    const $el = $(el)
 
-  if (cards.length === 0) {
-    // Fallback: try to find any anchor with /business/ in href
-    $('a[href*="/business/"]').each((_: number, el: unknown) => {
-      const href = $(el).attr('href')
-      if (!href) return
-      const absoluteUrl = href.startsWith('http') ? href : `https://www.bizbuysell.com${href}`
-      const nameEl = $(el).find('h3, h4, .title').first()
-      const name = nameEl.text().trim() || $(el).text().trim()
-      if (!name || name.length < 3) return
+    const title = $el
+      .find('[data-testid="listing-title"], .listing-title, h3, h2')
+      .first()
+      .text()
+      .trim()
+    if (!title || title.length < 3) return
 
-      const externalId = href.replace(/[^a-z0-9]/gi, '_').slice(0, 80)
+    const href = $el.find('a').first().attr('href') ?? ''
+    if (!href) return
+    const listingUrl = href.startsWith('http')
+      ? href
+      : `https://www.bizbuysell.com${href}`
 
-      results.push({
-        opportunity_type: 'acquisition',
-        name,
-        description: '',
-        location: 'New York / NJ area',
-        source_url: absoluteUrl,
-        source_platform: 'bizbuysell',
-        external_id: externalId,
-        business_type: businessType,
-      })
+    const description = $el
+      .find('[data-testid="listing-description"], .listing-description, .description, p')
+      .first()
+      .text()
+      .trim()
+
+    const location = $el
+      .find('[data-testid="listing-location"], .location, .city, .state')
+      .first()
+      .text()
+      .trim()
+
+    const askingText = $el
+      .find('[data-testid="asking-price"], .asking-price, .price, [class*="price"]')
+      .first()
+      .text()
+      .trim()
+
+    const revenueText = $el
+      .find('[data-testid="revenue"], .revenue, .gross-revenue, [class*="revenue"]')
+      .first()
+      .text()
+      .trim()
+
+    const cashFlowText = $el
+      .find('[data-testid="cash-flow"], .cash-flow, .sde, [class*="cash"]')
+      .first()
+      .text()
+      .trim()
+
+    const industry = $el
+      .find('[data-testid="industry"], .industry, .category, [class*="industry"]')
+      .first()
+      .text()
+      .trim()
+
+    results.push({
+      source: 'bizbuysell',
+      title,
+      description: description || null,
+      asking_price_cents: parseDollars(askingText),
+      revenue_cents: parseDollars(revenueText),
+      cash_flow_cents: parseDollars(cashFlowText),
+      industry: industry || null,
+      location: location || null,
+      listing_url: listingUrl,
+      is_passive_eligible: isPassiveEligible(title, description),
+      raw_snippet: $el.text().trim().slice(0, 500),
     })
-    return results.slice(0, 20)
-  }
-
-  cards.each((_: number, el: unknown) => {
-    try {
-      const card = $(el)
-
-      // Title / name
-      const titleEl = card.find('h3, h4, .listing-name, [class*="title"], a[href*="/business/"]').first()
-      const name = titleEl.text().trim()
-      if (!name || name.length < 3) return
-
-      // URL
-      const linkEl = card.find('a[href*="/business/"], a[href*="/listing/"]').first()
-      const href = linkEl.attr('href') ?? ''
-      const sourceUrl = href.startsWith('http') ? href : `https://www.bizbuysell.com${href}`
-      if (!href) return
-
-      // External ID from URL slug
-      const externalId = href.replace(/[^a-z0-9]/gi, '_').slice(-80)
-
-      // Location
-      const locationEl = card
-        .find('[class*="location"], [class*="city"], [class*="region"], .location')
-        .first()
-      const location = locationEl.text().trim() || 'NY / NJ area'
-
-      // Financials — BizBuySell shows them in labeled stat blocks
-      const allText = card.text()
-
-      // Try labeled values first
-      const askingMatch = allText.match(/(?:asking|price|listed)[:\s]*\$?([\d,]+(?:\.\d+)?[KkMm]?)/i)
-      const revenueMatch = allText.match(/(?:revenue|gross)[:\s]*\$?([\d,]+(?:\.\d+)?[KkMm]?)/i)
-      const cfMatch = allText.match(/(?:cash\s*flow|sde|ebitda|cf|profit)[:\s]*\$?([\d,]+(?:\.\d+)?[KkMm]?)/i)
-      const staffMatch = allText.match(/(?:employees|staff|workers)[:\s]*(\d+)/i)
-
-      const askingPrice = parseNumber(askingMatch?.[1])
-      const revenue = parseNumber(revenueMatch?.[1])
-      const cashFlow = parseNumber(cfMatch?.[1])
-      const staffCount = staffMatch ? parseInt(staffMatch[1], 10) : undefined
-
-      // Skip if asking price is wildly over budget
-      if (askingPrice && askingPrice > 600_000) return
-
-      // Description
-      const descEl = card.find('[class*="description"], [class*="summary"], p').first()
-      const description = descEl.text().trim().slice(0, 500) || `${name} — available for acquisition`
-
-      results.push({
-        opportunity_type: 'acquisition',
-        name,
-        description,
-        location,
-        source_url: sourceUrl,
-        source_platform: 'bizbuysell',
-        external_id: externalId,
-        asking_price: askingPrice,
-        revenue_annual: revenue,
-        cash_flow_annual: cashFlow,
-        staff_count: staffCount,
-        business_type: businessType,
-      })
-    } catch {
-      // Skip malformed cards
-    }
   })
 
-  return results.slice(0, 20)
+  return results
 }
 
-// ─── Empire Flippers parser ───────────────────────────────────────────────────
-
-function parseEmpireFlippersListings(html: string): RawBusinessListing[] {
-  const $ = cheerio.load(html)
-  const results: RawBusinessListing[] = []
-
-  $('[class*="listing"], [class*="marketplace-item"], article').each((_: number, el: unknown) => {
-    try {
-      const card = $(el)
-      const name = card.find('[class*="title"], h3, h4').first().text().trim()
-      if (!name || name.length < 3) return
-
-      const href = card.find('a').first().attr('href') ?? ''
-      if (!href) return
-      const sourceUrl = href.startsWith('http') ? href : `https://empireflippers.com${href}`
-      const externalId = href.replace(/[^a-z0-9]/gi, '_').slice(-80)
-
-      const allText = card.text()
-      const priceMatch = allText.match(/(?:listing price|asking)[:\s]*\$?([\d,]+(?:\.\d+)?[KkMm]?)/i)
-      const netMatch = allText.match(/(?:monthly\s*net|monthly\s*profit|net\s*profit)[:\s]*\$?([\d,]+(?:\.\d+)?[KkMm]?)/i)
-
-      const askingPrice = parseNumber(priceMatch?.[1])
-      const monthlyNet = parseNumber(netMatch?.[1])
-
-      if (askingPrice && askingPrice > 600_000) return
-
-      const description = card.find('p, [class*="description"]').first().text().trim().slice(0, 400)
-        || `${name} — online business`
-
-      results.push({
-        opportunity_type: 'acquisition',
-        name,
-        description,
-        location: 'Remote / Online',
-        source_url: sourceUrl,
-        source_platform: 'empireflippers',
-        external_id: externalId,
-        asking_price: askingPrice,
-        cash_flow_annual: monthlyNet ? monthlyNet * 12 : undefined,
-        business_type: 'online_business',
-      })
-    } catch {
-      // Skip
-    }
-  })
-
-  return results.slice(0, 15)
+export interface ScrapedBusiness {
+  id: string
+  listing: WealthBusiness
 }
 
-// ─── Craigslist business-for-sale parser (acquisition source) ─────────────────
+export async function scrapeBizBuySell(): Promise<ScrapedBusiness[]> {
+  console.log('[wealth/bizbuysell] Starting BizBuySell scrape...')
+  const newListings: ScrapedBusiness[] = []
 
-const CRAIGSLIST_BFS_SEARCHES = [
-  { url: 'https://newyork.craigslist.org/search/bfs?sort=date', region: 'New York' },
-  { url: 'https://newjersey.craigslist.org/search/bfs?sort=date', region: 'New Jersey' },
-  { url: 'https://newyork.craigslist.org/search/bfs?query=car+wash&sort=date', region: 'New York' },
-  { url: 'https://newyork.craigslist.org/search/bfs?query=laundromat&sort=date', region: 'New York' },
-  { url: 'https://newyork.craigslist.org/search/bfs?query=vending&sort=date', region: 'New York' },
-  { url: 'https://newyork.craigslist.org/search/bfs?query=cleaning+service&sort=date', region: 'New York' },
-  { url: 'https://newyork.craigslist.org/search/bfs?query=food+truck&sort=date', region: 'New York' },
-]
+  for (const url of SEARCH_URLS) {
+    console.log(`  → ${url}`)
+    const html = await fetchPage(url)
 
-function parseCraigslistBFS(html: string, region: string): RawBusinessListing[] {
-  const $ = cheerio.load(html)
-  const results: RawBusinessListing[] = []
-
-  const items = $('li.cl-search-result').length > 0
-    ? $('li.cl-search-result')
-    : $('.result-row, li[data-pid]')
-
-  items.each((_: number, el: unknown) => {
-    try {
-      const item = $(el)
-      const anchor = item.find('a.cl-app-anchor, a[data-id], .result-title, a.titlestring').first()
-      const name = (item.find('.label, .result-title').first().text() || anchor.text()).trim()
-      if (!name || name.length < 5) return
-
-      const href = anchor.attr('href') ?? item.find('a').first().attr('href') ?? ''
-      if (!href) return
-
-      const sourceUrl = href.startsWith('http') ? href : `https://newyork.craigslist.org${href}`
-      const location = item.find('.meta, .result-hood').first()
-        .text().replace(/[()·]/g, '').trim().split('\n')[0].trim() || region
-
-      const priceEl = item.find('.priceinfo, .result-price').first()
-      const askingPrice = parseNumber(priceEl.text().trim())
-
-      // Skip obvious overpriced listings
-      if (askingPrice && askingPrice > 600_000) return
-
-      const externalId = anchor.attr('data-id') ?? item.attr('data-pid')
-        ?? href.replace(/[^a-z0-9]/gi, '_').slice(-80)
-
-      results.push({
-        opportunity_type: 'acquisition',
-        name,
-        description: `Business for sale on Craigslist — ${region}`,
-        location,
-        source_url: sourceUrl,
-        source_platform: 'craigslist',
-        external_id: externalId,
-        asking_price: askingPrice,
-        business_type: 'unknown',
-      })
-    } catch {
-      // Skip
-    }
-  })
-
-  return results.slice(0, 15)
-}
-
-// ─── Main export ──────────────────────────────────────────────────────────────
-
-export async function scrapeBizBuySell(): Promise<RawBusinessListing[]> {
-  console.log('[wealth:bizbuysell] Starting business listing scan...')
-  const allListings: RawBusinessListing[] = []
-
-  for (const config of SEARCH_CONFIGS) {
-    const platform = (config as { platform?: string }).platform ?? 'bizbuysell'
-    console.log(`  → Fetching ${platform}: ${config.type}`)
-
-    const html = await fetchPage(config.url)
     if (!html) {
-      await delay(2000)
+      console.warn('    [skip] Failed to fetch page')
+      await new Promise((r) => setTimeout(r, 3_000))
       continue
     }
 
-    const listings =
-      platform === 'empireflippers'
-        ? parseEmpireFlippersListings(html)
-        : parseBizBuySellListings(html, config.type, config.url)
+    const listings = scrapePage(html)
+    console.log(`    found ${listings.length} listing(s)`)
 
-    if (platform === 'empireflippers') {
-      listings.forEach((l) => (l.source_platform = 'empireflippers'))
+    for (const listing of listings) {
+      const result = await upsertBusiness(listing)
+      if (result?.isNew) {
+        newListings.push({ id: result.id, listing })
+        console.log(`    [new] ${listing.title}${listing.is_passive_eligible ? ' ★ passive' : ''}`)
+      }
     }
 
-    console.log(`    Found ${listings.length} listings`)
-    allListings.push(...listings)
-
-    await delay(1500 + Math.random() * 1000)
+    await new Promise((r) => setTimeout(r, 3_000))
   }
 
-  // Craigslist BFS — reliable, doesn't block cloud IPs
-  console.log('  → Fetching Craigslist business-for-sale listings...')
-  for (const search of CRAIGSLIST_BFS_SEARCHES) {
-    const html = await fetchPage(search.url)
-    if (html) {
-      const listings = parseCraigslistBFS(html, search.region)
-      console.log(`    Craigslist BFS [${search.region}]: ${listings.length} listings`)
-      allListings.push(...listings)
-    }
-    await delay(800 + Math.random() * 400)
-  }
-
-  // Flippa RSS — online businesses
-  const flippaListings = await scrapeFlippa()
-  allListings.push(...flippaListings)
-
-  // BizQuest — sister site to BizBuySell, separate IP blocklist
-  console.log('  → Fetching BizQuest listings...')
-  for (const search of BIZQUEST_SEARCHES) {
-    const html = await fetchPage(search.url)
-    if (html) {
-      const listings = parseBizQuest(html, search.region)
-      console.log(`    BizQuest [${search.region}]: ${listings.length} listings`)
-      allListings.push(...listings)
-    }
-    await delay(1500 + Math.random() * 500)
-  }
-
-  // BusinessesForSale.com — global marketplace
-  console.log('  → Fetching BusinessesForSale.com listings...')
-  for (const search of BUSINESSES_FOR_SALE_SEARCHES) {
-    const html = await fetchPage(search.url)
-    if (html) {
-      const listings = parseBusinessesForSale(html, search.region)
-      console.log(`    BusinessesForSale [${search.region}]: ${listings.length} listings`)
-      allListings.push(...listings)
-    }
-    await delay(1500 + Math.random() * 500)
-  }
-
-  // Deduplicate by external_id within this batch
-  const seen = new Set<string>()
-  const unique = allListings.filter((l) => {
-    const key = `${l.source_platform}::${l.external_id}`
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
-
-  console.log(`[wealth:bizbuysell] Done — ${unique.length} unique listings found`)
-  return unique
-}
-
-function delay(ms: number) {
-  return new Promise((r) => setTimeout(r, ms))
+  console.log(`[wealth/bizbuysell] Done — ${newListings.length} new listing(s)`)
+  return newListings
 }

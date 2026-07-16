@@ -1,119 +1,94 @@
 -- ============================================================
--- Migration 005: Wealth Operator
--- Tables for tracking business acquisition, capital injection,
--- and job opportunities for the autonomous wealth operator.
+-- Wealth Operator — Migration 005
+-- Tracks business acquisition, capital injection, and job
+-- opportunities discovered by the autonomous scraper.
+--
+-- H1B constraint: all outreach is DRAFT ONLY — nothing is
+-- sent automatically. The wealth_alerts table records drafts.
 -- ============================================================
 
--- Self-contained: create handle_updated_at if it doesn't already exist
-create or replace function public.handle_updated_at()
-returns trigger language plpgsql as $$
-begin
-  new.updated_at = now();
-  return new;
-end;
-$$;
+-- ─── Objective A: Businesses for sale ───────────────────────
+create table public.wealth_businesses (
+  id                  uuid default gen_random_uuid() primary key,
+  source              text not null,              -- 'bizbuysell', 'acquire', 'flippa'
+  title               text not null,
+  description         text,
+  asking_price_cents  bigint,                     -- null = undisclosed
+  revenue_cents       bigint,                     -- annual gross
+  cash_flow_cents     bigint,                     -- annual SDE / EBITDA
+  industry            text,
+  location            text,
+  listing_url         text not null,
+  is_passive_eligible boolean not null default false,  -- H1B passive-ownership filter
+  raw_snippet         text,
+  first_seen_at       timestamptz default now() not null,
+  last_seen_at        timestamptz default now() not null,
+  alerted_at          timestamptz
+);
 
--- ── Opportunity type / grade / status enums ──────────────────
+create unique index on public.wealth_businesses (source, listing_url);
+create index on public.wealth_businesses (first_seen_at desc);
+create index on public.wealth_businesses (is_passive_eligible) where is_passive_eligible = true;
+create index on public.wealth_businesses (alerted_at) where alerted_at is null;
 
-create type wealth_opp_type   as enum ('acquisition', 'capital_injection', 'job');
-create type wealth_opp_grade  as enum ('A+', 'A', 'B', 'C');
-create type wealth_opp_status as enum ('new', 'reviewed', 'contacted', 'passed', 'pursuing');
 
--- ── Main opportunities table ─────────────────────────────────
-
-create table public.wealth_opportunities (
+-- ─── Objective B: Capital injection / equity opportunities ───
+create table public.wealth_capital_opportunities (
   id                    uuid default gen_random_uuid() primary key,
-  opportunity_type      wealth_opp_type not null,
-
-  -- Universal fields
-  name                  text not null,
+  source                text not null,            -- 'acquire', 'flippa'
+  company_name          text not null,
   description           text,
+  amount_seeking_cents  bigint,                   -- asking / investment amount
+  equity_pct            numeric(5,2),             -- % equity offered (if applicable)
+  industry              text,
   location              text,
-  source_url            text,
-  source_platform       text,      -- 'bizbuysell' | 'empireflippers' | 'craigslist' | 'indeed' | 'linkedin' | etc.
-  external_id           text,      -- unique ID from the source platform (for dedup)
-  status                wealth_opp_status not null default 'new',
-  grade                 wealth_opp_grade,
-  listing_date          date,
-
-  -- ── Business acquisition / capital injection fields ───────
-  asking_price          numeric,
-  revenue_annual        numeric,
-  cash_flow_annual      numeric,   -- EBITDA / SDE
-  staff_count           int,
-  owner_hours_per_week  int,
-  passive_possible      boolean,
-  equity_needed         numeric,   -- my equity contribution
-  financing_options     text[],    -- ['SBA', 'seller_note', 'earnout', 'partner']
-  debt_service_annual   numeric,
-  cash_on_cash_return   numeric,   -- as a percentage e.g. 22.5
-  risk_score            int check (risk_score between 1 and 10),
-  business_type         text,      -- 'car_wash' | 'laundromat' | 'vending' | etc.
-  seller_motivation     text,
-
-  -- ── Job fields ────────────────────────────────────────────
-  firm_name             text,
-  job_title             text,
-  estimated_comp_low    numeric,
-  estimated_comp_high   numeric,
-  fit_score             int check (fit_score between 1 and 10),
-  difficulty_score      int check (difficulty_score between 1 and 10),
-  warm_outreach         boolean,
-
-  -- ── AI underwriting output ────────────────────────────────
-  ai_summary            text,
-  ai_rationale          text,
-  ai_risks              text,
-  ai_action_items       text[],
-  ai_next_step          text,
-
-  -- ── Metadata ─────────────────────────────────────────────
-  found_at              timestamptz default now() not null,
-  updated_at            timestamptz default now() not null,
-  alert_sent_at         timestamptz,
-
-  -- Dedup: same external ID on same platform = same listing
-  unique (source_platform, external_id)
+  listing_url           text not null,
+  raw_snippet           text,
+  first_seen_at         timestamptz default now() not null,
+  last_seen_at          timestamptz default now() not null,
+  alerted_at            timestamptz
 );
 
-create trigger wealth_opp_updated_at
-  before update on public.wealth_opportunities
-  for each row execute function public.handle_updated_at();
+create unique index on public.wealth_capital_opportunities (source, listing_url);
+create index on public.wealth_capital_opportunities (first_seen_at desc);
+create index on public.wealth_capital_opportunities (alerted_at) where alerted_at is null;
 
--- ── Outreach drafts table ────────────────────────────────────
 
-create table public.wealth_outreach (
-  id                   uuid default gen_random_uuid() primary key,
-  opportunity_id       uuid references public.wealth_opportunities(id) on delete cascade not null,
-  outreach_type        text not null check (outreach_type in ('broker', 'owner', 'job')),
-  recipient_name       text,
-  recipient_email      text,
-  subject              text not null,
-  body                 text not null,
-  sent_at              timestamptz,
-  follow_up_due_at     timestamptz,
-  response_at          timestamptz,
-  created_at           timestamptz default now() not null
+-- ─── Objective C: NYC jobs paying $250k+ ────────────────────
+create table public.wealth_jobs (
+  id                uuid default gen_random_uuid() primary key,
+  source            text not null,               -- 'builtin_nyc', 'ladders'
+  job_title         text not null,
+  company           text,
+  salary_min_cents  bigint,
+  salary_max_cents  bigint,
+  location          text,
+  description       text,
+  listing_url       text not null,
+  posted_at         timestamptz,
+  raw_snippet       text,
+  first_seen_at     timestamptz default now() not null,
+  alerted_at        timestamptz
 );
 
--- ── Digest log ───────────────────────────────────────────────
+create unique index on public.wealth_jobs (source, listing_url);
+create index on public.wealth_jobs (first_seen_at desc);
+create index on public.wealth_jobs (salary_max_cents desc nulls last);
+create index on public.wealth_jobs (alerted_at) where alerted_at is null;
 
-create table public.wealth_digest_log (
+
+-- ─── Objective D: Alert / outreach draft log ────────────────
+-- Records every draft outreach email generated.
+-- sent_at is intentionally never populated by automation —
+-- the user copies the draft and sends it manually.
+create table public.wealth_alerts (
   id              uuid default gen_random_uuid() primary key,
-  sent_at         timestamptz default now() not null,
-  recipient_email text not null,
-  subject         text,
-  total_opps      int,
-  a_plus_count    int,
-  a_count         int,
-  b_count         int
+  category        text not null check (category in ('business', 'capital', 'job')),
+  reference_id    uuid not null,
+  draft_subject   text not null,
+  draft_body_text text not null,
+  notified_at     timestamptz default now() not null
 );
 
--- ── Indexes ──────────────────────────────────────────────────
-
-create index wealth_opp_type_idx     on public.wealth_opportunities(opportunity_type);
-create index wealth_opp_grade_idx    on public.wealth_opportunities(grade);
-create index wealth_opp_status_idx   on public.wealth_opportunities(status);
-create index wealth_opp_found_at_idx on public.wealth_opportunities(found_at desc);
-create index wealth_opp_platform_idx on public.wealth_opportunities(source_platform);
-create index wealth_outreach_opp_idx on public.wealth_outreach(opportunity_id);
+create index on public.wealth_alerts (notified_at desc);
+create index on public.wealth_alerts (category, reference_id);

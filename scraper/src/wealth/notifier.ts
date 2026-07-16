@@ -1,173 +1,246 @@
-/**
- * Wealth Operator Notifier
- *
- * Sends instant email alerts for A+ and A deals via Resend.
- *
- * Env vars required:
- *  WEALTH_ALERT_EMAIL  — recipient email (default: benrubera1@gmail.com)
- *  RESEND_API_KEY      — Resend API key
- *  RESEND_FROM_EMAIL   — from address (default: alerts@deadlineiq.com)
- */
+// Sends notification emails to the owner (WEALTH_ALERT_EMAIL) whenever a
+// new opportunity is discovered. Each notification includes the full draft
+// outreach text inline so the owner can copy-paste and send manually.
+//
+// The notification itself IS sent via Resend; the OUTREACH draft embedded
+// inside is NOT — it is purely informational text for the owner to use.
 
 import { Resend } from 'resend'
-import type { WealthOpportunity } from './types.js'
-
-// ─── Config ───────────────────────────────────────────────────────────────────
-
-const ALERT_EMAIL = process.env.WEALTH_ALERT_EMAIL ?? 'benrubera1@gmail.com'
-const FROM_EMAIL = process.env.RESEND_FROM_EMAIL ?? 'alerts@deadlineiq.com'
-const APP_URL = process.env.APP_URL ?? 'https://deadlineiq.com'
+import {
+  buildBusinessOutreachDraft,
+  buildCapitalOutreachDraft,
+  buildJobOutreachDraft,
+} from './outreach.js'
+import { recordAlert } from './db.js'
+import type { ScrapedBusiness } from './bizbuysell.js'
+import type { ScrapedCapital } from './capital.js'
+import type { ScrapedJob } from './jobs.js'
 
 const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
   : null
 
-// ─── Grade badge colors ───────────────────────────────────────────────────────
+const FROM = process.env.RESEND_FROM_EMAIL ?? 'alerts@deadlineiq.com'
+const ALERT_TO = process.env.WEALTH_ALERT_EMAIL ?? FROM
+const APP_URL = process.env.APP_URL ?? 'https://deadlineiq.com'
 
-const GRADE_COLOR: Record<string, string> = {
-  'A+': '#10b981', // emerald
-  'A':  '#3b82f6', // blue
-  'B':  '#f59e0b', // amber
-  'C':  '#64748b', // slate
+function formatMoney(cents: number | null): string {
+  if (cents === null) return 'N/A'
+  const d = cents / 100
+  if (d >= 1_000_000) return `$${(d / 1_000_000).toFixed(1)}M`
+  if (d >= 1_000) return `$${(d / 1_000).toFixed(0)}K`
+  return `$${d.toFixed(0)}`
 }
 
-const TYPE_LABEL: Record<string, string> = {
-  acquisition:       'Business Acquisition',
-  capital_injection: 'Capital Injection / Equity Buy-In',
-  job:               'NYC Job Opportunity',
+function escapedDraft(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
 }
 
-// ─── Email HTML builder ───────────────────────────────────────────────────────
+// ─── Shared layout pieces ─────────────────────────────────────
 
-function buildAlertEmail(opp: WealthOpportunity): string {
-  const gradeColor = GRADE_COLOR[opp.grade ?? 'B'] ?? '#64748b'
-  const typeLabel = TYPE_LABEL[opp.opportunity_type] ?? opp.opportunity_type
+function header(subtitle: string): string {
+  return `
+    <tr><td style="padding-bottom:20px">
+      <span style="font-size:18px;font-weight:700;color:#fff;letter-spacing:-.3px">Deadline<span style="color:#3b82f6">IQ</span></span>
+      <span style="margin-left:12px;font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.06em">${subtitle}</span>
+    </td></tr>`
+}
 
-  const financialsHtml =
-    opp.opportunity_type !== 'job'
-      ? `
-        <table style="width:100%;border-collapse:collapse;margin-top:16px">
-          ${opp.asking_price ? `<tr><td style="padding:6px 0;color:#94a3b8;font-size:13px;width:160px">Asking Price</td><td style="padding:6px 0;color:#f1f5f9;font-size:13px;font-weight:600">$${opp.asking_price.toLocaleString()}</td></tr>` : ''}
-          ${opp.cash_flow_annual ? `<tr><td style="padding:6px 0;color:#94a3b8;font-size:13px">Annual Cash Flow</td><td style="padding:6px 0;color:#10b981;font-size:13px;font-weight:600">$${opp.cash_flow_annual.toLocaleString()}</td></tr>` : ''}
-          ${opp.revenue_annual ? `<tr><td style="padding:6px 0;color:#94a3b8;font-size:13px">Annual Revenue</td><td style="padding:6px 0;color:#f1f5f9;font-size:13px">$${opp.revenue_annual.toLocaleString()}</td></tr>` : ''}
-          ${opp.equity_needed ? `<tr><td style="padding:6px 0;color:#94a3b8;font-size:13px">Equity Needed</td><td style="padding:6px 0;color:#f59e0b;font-size:13px;font-weight:600">$${opp.equity_needed.toLocaleString()}</td></tr>` : ''}
-          ${opp.cash_on_cash_return ? `<tr><td style="padding:6px 0;color:#94a3b8;font-size:13px">Cash-on-Cash Return</td><td style="padding:6px 0;color:#10b981;font-size:13px;font-weight:600">${opp.cash_on_cash_return.toFixed(1)}%</td></tr>` : ''}
-          ${opp.risk_score ? `<tr><td style="padding:6px 0;color:#94a3b8;font-size:13px">Risk Score</td><td style="padding:6px 0;color:#f1f5f9;font-size:13px">${opp.risk_score}/10</td></tr>` : ''}
-          ${opp.passive_possible !== undefined ? `<tr><td style="padding:6px 0;color:#94a3b8;font-size:13px">Passive Ownership</td><td style="padding:6px 0;font-size:13px;font-weight:600;color:${opp.passive_possible ? '#10b981' : '#ef4444'}">${opp.passive_possible ? 'YES ✓' : 'NO — Review H1B'}</td></tr>` : ''}
-        </table>`
-      : `
-        <table style="width:100%;border-collapse:collapse;margin-top:16px">
-          ${opp.estimated_comp_low && opp.estimated_comp_high ? `<tr><td style="padding:6px 0;color:#94a3b8;font-size:13px;width:160px">Estimated Comp</td><td style="padding:6px 0;color:#10b981;font-size:13px;font-weight:600">$${opp.estimated_comp_low.toLocaleString()} – $${opp.estimated_comp_high.toLocaleString()}</td></tr>` : ''}
-          ${opp.fit_score ? `<tr><td style="padding:6px 0;color:#94a3b8;font-size:13px">Fit Score</td><td style="padding:6px 0;color:#f1f5f9;font-size:13px">${opp.fit_score}/10</td></tr>` : ''}
-          ${opp.difficulty_score ? `<tr><td style="padding:6px 0;color:#94a3b8;font-size:13px">Difficulty</td><td style="padding:6px 0;color:#f1f5f9;font-size:13px">${opp.difficulty_score}/10</td></tr>` : ''}
-          ${opp.warm_outreach !== undefined ? `<tr><td style="padding:6px 0;color:#94a3b8;font-size:13px">Warm Outreach?</td><td style="padding:6px 0;font-size:13px;font-weight:600;color:${opp.warm_outreach ? '#f59e0b' : '#64748b'}">${opp.warm_outreach ? 'YES — Get intro' : 'Cold outreach OK'}</td></tr>` : ''}
-        </table>`
+function draftBox(draft: { subject: string; body: string }): string {
+  return `
+    <tr><td style="padding-top:24px">
+      <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#cbd5e1">Draft outreach — copy, personalise, then send manually:</p>
+      <p style="margin:0 0 4px;font-size:11px;color:#64748b"><strong>Subject:</strong> ${draft.subject}</p>
+      <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:16px;font-family:'Courier New',monospace;font-size:12px;color:#94a3b8;white-space:pre-wrap;line-height:1.6">${escapedDraft(draft.body)}</div>
+    </td></tr>`
+}
 
-  const actionItemsHtml =
-    opp.ai_action_items && opp.ai_action_items.length > 0
-      ? `<div style="margin-top:16px">
-          <p style="margin:0 0 8px;font-size:12px;font-weight:600;color:#cbd5e1;text-transform:uppercase;letter-spacing:.05em">Next Steps</p>
-          <ul style="margin:0;padding-left:18px">
-            ${opp.ai_action_items.map((a) => `<li style="margin-bottom:5px;color:#94a3b8;font-size:13px;line-height:1.5">${a}</li>`).join('')}
-          </ul>
-        </div>`
-      : ''
+function footer(note: string): string {
+  return `
+    <tr><td style="padding-top:16px">
+      <p style="margin:0;font-size:11px;color:#475569;line-height:1.5">${note}</p>
+    </td></tr>`
+}
 
+function tableRow(label: string, value: string, isLast = false): string {
+  const border = isLast ? '' : 'border-bottom:1px solid #334155;'
+  return `
+    <tr>
+      <td style="padding:8px 16px 8px 0;${border}font-size:12px;color:#64748b;width:40%">${label}</td>
+      <td style="padding:8px 0;${border}font-size:14px;font-weight:600;color:#f1f5f9">${value}</td>
+    </tr>`
+}
+
+function wrapEmail(bodyRows: string): string {
   return `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Wealth Alert: ${opp.grade} — ${opp.name}</title></head>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;padding:0;background:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f172a;padding:40px 16px">
-    <tr><td align="center">
-      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
-
-        <!-- Logo -->
-        <tr><td style="padding-bottom:20px">
-          <span style="font-size:16px;font-weight:700;color:#fff">Deadline<span style="color:#3b82f6">IQ</span></span>
-          <span style="margin-left:12px;font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.06em">Wealth Operator</span>
-        </td></tr>
-
-        <!-- Alert header -->
-        <tr><td style="background:#1e293b;border-radius:12px 12px 0 0;padding:20px 28px;border:1px solid #334155;border-bottom:none">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-            <span style="display:inline-block;padding:4px 14px;border-radius:999px;font-size:13px;font-weight:700;color:#fff;background:${gradeColor};letter-spacing:.02em">Grade ${opp.grade}</span>
-            <span style="font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.06em">${typeLabel}</span>
-          </div>
-          <h1 style="margin:0 0 6px;font-size:22px;font-weight:700;color:#f1f5f9;line-height:1.2">${opp.name}</h1>
-          <p style="margin:0;font-size:13px;color:#64748b">${opp.location} · ${opp.source_platform}</p>
-        </td></tr>
-
-        <!-- Body card -->
-        <tr><td style="background:#1e293b;padding:0 28px 24px;border:1px solid #334155;border-top:none;border-radius:0 0 12px 12px">
-
-          <!-- Summary -->
-          <p style="margin:16px 0 0;font-size:14px;color:#cbd5e1;line-height:1.7">${opp.ai_summary ?? opp.description}</p>
-
-          <!-- Financials table -->
-          ${financialsHtml}
-
-          <!-- Rationale -->
-          ${opp.ai_rationale ? `<div style="margin-top:16px;padding:12px 14px;background:#0f172a;border-radius:8px;border-left:3px solid ${gradeColor}"><p style="margin:0;font-size:13px;color:#94a3b8;line-height:1.6">${opp.ai_rationale}</p></div>` : ''}
-
-          <!-- Risks -->
-          ${opp.ai_risks ? `<p style="margin:14px 0 0;font-size:12px;color:#ef4444"><strong>Risks:</strong> ${opp.ai_risks}</p>` : ''}
-
-          <!-- Action items -->
-          ${actionItemsHtml}
-
-          <!-- Next step -->
-          ${opp.ai_next_step ? `<div style="margin-top:16px;padding:12px 14px;background:#10b981/10;border-radius:8px;border:1px solid #10b981/20"><p style="margin:0;font-size:13px;font-weight:600;color:#10b981">→ ${opp.ai_next_step}</p></div>` : ''}
-
-          <!-- CTAs -->
-          <div style="margin-top:24px;display:flex;gap:10px">
-            ${opp.source_url ? `<a href="${opp.source_url}" style="display:inline-block;padding:10px 20px;background:${gradeColor};color:#fff;text-decoration:none;border-radius:8px;font-size:13px;font-weight:600;margin-right:10px">View Listing →</a>` : ''}
-            <a href="${APP_URL}/wealth" style="display:inline-block;padding:10px 20px;background:#1e293b;border:1px solid #334155;color:#94a3b8;text-decoration:none;border-radius:8px;font-size:13px;font-weight:600">Open Wealth Dashboard</a>
-          </div>
-
-        </td></tr>
-
-        <!-- Footer -->
-        <tr><td style="padding:16px 0 0">
-          <p style="margin:0;font-size:11px;color:#475569;line-height:1.5">
-            Sent by your DeadlineIQ Wealth Operator. Always consult legal counsel before closing any transaction.
-            H1B compliance review required before acquiring or investing in any business.
-          </p>
-        </td></tr>
-
-      </table>
-    </td></tr>
-  </table>
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#0f172a;padding:40px 16px">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
+${bodyRows}
+</table>
+</td></tr>
+</table>
 </body>
 </html>`
 }
 
-// ─── Main export — send instant alert for A+ and A opportunities ──────────────
+// ─── Business notification ────────────────────────────────────
 
-export async function sendInstantWealthAlert(opp: WealthOpportunity): Promise<void> {
-  if (!opp.grade || !['A+', 'A'].includes(opp.grade)) return
+function buildBusinessHtml(b: ScrapedBusiness, draft: { subject: string; body: string }): string {
+  const l = b.listing
+  const passiveBadge = l.is_passive_eligible
+    ? `<span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;background:#166534;color:#dcfce7;margin-left:8px">Passive-eligible</span>`
+    : ''
 
-  const typeLabel = TYPE_LABEL[opp.opportunity_type] ?? opp.opportunity_type
-  const subject = `[${opp.grade}] ${typeLabel}: ${opp.name}`
+  const rows = `
+    ${header('Wealth Operator')}
+    <tr><td style="background:#1e293b;border-radius:12px;padding:28px 32px;border:1px solid #334155">
+      <p style="margin:0 0 6px;font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.06em">Business for Sale · ${l.source}</p>
+      <h1 style="margin:0 0 4px;font-size:20px;font-weight:700;color:#f1f5f9">${l.title}${passiveBadge}</h1>
+      ${l.location ? `<p style="margin:4px 0 16px;font-size:13px;color:#94a3b8">${l.location}</p>` : '<div style="margin-bottom:16px"></div>'}
+      <table cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:20px">
+        ${tableRow('Asking Price', formatMoney(l.asking_price_cents))}
+        ${tableRow('Cash Flow', formatMoney(l.cash_flow_cents))}
+        ${tableRow('Revenue', formatMoney(l.revenue_cents), true)}
+      </table>
+      ${l.description ? `<p style="margin:0 0 20px;font-size:14px;color:#94a3b8;line-height:1.6">${l.description.slice(0, 300)}${l.description.length > 300 ? '…' : ''}</p>` : ''}
+      <a href="${l.listing_url}" style="display:inline-block;padding:10px 20px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600;margin-right:8px">View Listing</a>
+      <a href="${APP_URL}/wealth" style="display:inline-block;padding:10px 20px;border:1px solid #334155;color:#94a3b8;text-decoration:none;border-radius:8px;font-size:14px">Dashboard</a>
+    </td></tr>
+    ${draftBox(draft)}
+    ${footer('This alert is for your personal use only. All outreach is drafted — never sent automatically. Consult an immigration attorney before acquiring any business (H1B considerations).')}`
 
-  // 1. Email
-  if (resend) {
-    try {
-      const { error } = await resend.emails.send({
-        from: FROM_EMAIL,
-        to: ALERT_EMAIL,
-        subject,
-        html: buildAlertEmail(opp),
-      })
-      if (error) {
-        console.error('  [notifier] Email failed:', error.message)
-      } else {
-        console.log(`  [notifier] Email alert sent — ${opp.grade}: ${opp.name}`)
-      }
-    } catch (err) {
-      console.error('  [notifier] Email error:', err instanceof Error ? err.message : err)
-    }
-  } else {
-    console.log('  [notifier] Email skipped — RESEND_API_KEY not set')
+  return wrapEmail(rows)
+}
+
+// ─── Capital notification ─────────────────────────────────────
+
+function buildCapitalHtml(c: ScrapedCapital, draft: { subject: string; body: string }): string {
+  const opp = c.opportunity
+
+  const rows = `
+    ${header('Wealth Operator')}
+    <tr><td style="background:#1e293b;border-radius:12px;padding:28px 32px;border:1px solid #334155">
+      <p style="margin:0 0 6px;font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.06em">Capital / Equity Opportunity · ${opp.source}</p>
+      <h1 style="margin:0 0 16px;font-size:20px;font-weight:700;color:#f1f5f9">${opp.company_name}</h1>
+      <table cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:20px">
+        ${tableRow('Amount Seeking', formatMoney(opp.amount_seeking_cents))}
+        ${opp.industry ? tableRow('Industry', opp.industry) : ''}
+        ${tableRow('Location', opp.location ?? 'Remote', true)}
+      </table>
+      ${opp.description ? `<p style="margin:0 0 20px;font-size:14px;color:#94a3b8;line-height:1.6">${opp.description.slice(0, 300)}${opp.description.length > 300 ? '…' : ''}</p>` : ''}
+      <a href="${opp.listing_url}" style="display:inline-block;padding:10px 20px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600;margin-right:8px">View Listing</a>
+      <a href="${APP_URL}/wealth" style="display:inline-block;padding:10px 20px;border:1px solid #334155;color:#94a3b8;text-decoration:none;border-radius:8px;font-size:14px">Dashboard</a>
+    </td></tr>
+    ${draftBox(draft)}
+    ${footer('This alert is for your personal use only. Outreach is drafted — never sent automatically. Consult an immigration attorney before making any investment (H1B considerations).')}`
+
+  return wrapEmail(rows)
+}
+
+// ─── Job notification ─────────────────────────────────────────
+
+function buildJobHtml(j: ScrapedJob, draft: { subject: string; body: string }): string {
+  const job = j.job
+  const salMin = formatMoney(job.salary_min_cents)
+  const salMax = formatMoney(job.salary_max_cents)
+  const salRange =
+    job.salary_min_cents && job.salary_max_cents
+      ? `${salMin}–${salMax}`
+      : job.salary_max_cents
+        ? `up to ${salMax}`
+        : 'Undisclosed'
+
+  const rows = `
+    ${header('Wealth Operator')}
+    <tr><td style="background:#1e293b;border-radius:12px;padding:28px 32px;border:1px solid #334155">
+      <p style="margin:0 0 6px;font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.06em">Job · ${job.source}</p>
+      <h1 style="margin:0 0 4px;font-size:20px;font-weight:700;color:#f1f5f9">${job.job_title}</h1>
+      ${job.company ? `<p style="margin:0 0 16px;font-size:15px;color:#94a3b8">${job.company}</p>` : '<div style="margin-bottom:16px"></div>'}
+      <table cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:20px">
+        ${tableRow('Salary', `<span style="color:#22c55e">${salRange}</span>`)}
+        ${tableRow('Location', job.location ?? 'New York, NY', true)}
+      </table>
+      <a href="${job.listing_url}" style="display:inline-block;padding:10px 20px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600;margin-right:8px">View Job</a>
+      <a href="${APP_URL}/wealth" style="display:inline-block;padding:10px 20px;border:1px solid #334155;color:#94a3b8;text-decoration:none;border-radius:8px;font-size:14px">Dashboard</a>
+    </td></tr>
+    ${draftBox(draft)}
+    ${footer('This alert is for your personal use only. Application drafts are never sent automatically.')}`
+
+  return wrapEmail(rows)
+}
+
+// ─── Public send functions ────────────────────────────────────
+
+async function sendEmail(to: string, subject: string, html: string, label: string): Promise<void> {
+  if (!resend) {
+    console.log(`  [notify] Skipped (no RESEND_API_KEY) — ${label}`)
+    return
   }
+
+  const { error } = await resend.emails.send({ from: FROM, to, subject, html })
+
+  if (error) {
+    console.error(`  [notify] Email failed for ${label}:`, error.message)
+  } else {
+    console.log(`  [notify] Alert sent to ${to} — ${label}`)
+  }
+}
+
+export async function notifyBusiness(b: ScrapedBusiness): Promise<void> {
+  const draft = buildBusinessOutreachDraft({
+    businessTitle: b.listing.title,
+    askingPrice: b.listing.asking_price_cents,
+    cashFlow: b.listing.cash_flow_cents,
+    location: b.listing.location,
+    listingUrl: b.listing.listing_url,
+  })
+
+  await recordAlert('business', b.id, draft.subject, draft.body)
+  await sendEmail(
+    ALERT_TO,
+    `[Wealth] New business for sale: ${b.listing.title}`,
+    buildBusinessHtml(b, draft),
+    b.listing.title
+  )
+}
+
+export async function notifyCapital(c: ScrapedCapital): Promise<void> {
+  const draft = buildCapitalOutreachDraft({
+    companyName: c.opportunity.company_name,
+    amountSeeking: c.opportunity.amount_seeking_cents,
+    industry: c.opportunity.industry,
+    listingUrl: c.opportunity.listing_url,
+  })
+
+  await recordAlert('capital', c.id, draft.subject, draft.body)
+  await sendEmail(
+    ALERT_TO,
+    `[Wealth] New investment opportunity: ${c.opportunity.company_name}`,
+    buildCapitalHtml(c, draft),
+    c.opportunity.company_name
+  )
+}
+
+export async function notifyJob(j: ScrapedJob): Promise<void> {
+  const draft = buildJobOutreachDraft({
+    jobTitle: j.job.job_title,
+    company: j.job.company,
+    salaryMax: j.job.salary_max_cents,
+    listingUrl: j.job.listing_url,
+  })
+
+  await recordAlert('job', j.id, draft.subject, draft.body)
+  await sendEmail(
+    ALERT_TO,
+    `[Wealth] $250k+ job: ${j.job.job_title}${j.job.company ? ` at ${j.job.company}` : ''}`,
+    buildJobHtml(j, draft),
+    j.job.job_title
+  )
 }

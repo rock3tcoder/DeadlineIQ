@@ -1,149 +1,166 @@
-import { createClient } from '@supabase/supabase-js'
-import type { RawListing, UnderwritingResult, WealthOpportunity } from './types.js'
+import db from '../db.js'
 
-// Use dedicated wealth Supabase project if configured, otherwise fall back to main project
-const WEALTH_URL = process.env.WEALTH_SUPABASE_URL ?? process.env.SUPABASE_URL ?? ''
-const WEALTH_KEY = process.env.WEALTH_SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY ?? ''
+// ─── Types ───────────────────────────────────────────────────
 
-const db = createClient(WEALTH_URL, WEALTH_KEY, {
-  auth: { persistSession: false },
-})
-
-// ─── Check if a listing already exists (dedup) ───────────────────────────────
-
-export async function exists(platform: string, externalId: string): Promise<boolean> {
-  const { count } = await db
-    .from('wealth_opportunities')
-    .select('id', { count: 'exact', head: true })
-    .eq('source_platform', platform)
-    .eq('external_id', externalId)
-  return (count ?? 0) > 0
+export interface WealthBusiness {
+  source: string
+  title: string
+  description: string | null
+  asking_price_cents: number | null
+  revenue_cents: number | null
+  cash_flow_cents: number | null
+  industry: string | null
+  location: string | null
+  listing_url: string
+  is_passive_eligible: boolean
+  raw_snippet: string | null
 }
 
-// ─── Save a new opportunity with its underwriting result ─────────────────────
+export interface WealthCapital {
+  source: string
+  company_name: string
+  description: string | null
+  amount_seeking_cents: number | null
+  equity_pct: number | null
+  industry: string | null
+  location: string | null
+  listing_url: string
+  raw_snippet: string | null
+}
 
-export async function saveOpportunity(
-  listing: RawListing,
-  underwriting: UnderwritingResult,
-): Promise<string | null> {
-  const base = {
-    opportunity_type: listing.opportunity_type,
-    name: listing.name,
-    description: listing.description,
-    location: listing.location,
-    source_url: listing.source_url,
-    source_platform: listing.source_platform,
-    external_id: listing.external_id,
-    listing_date: listing.listing_date ?? null,
-    grade: underwriting.grade,
-    ai_summary: underwriting.ai_summary,
-    ai_rationale: underwriting.ai_rationale,
-    ai_risks: underwriting.ai_risks,
-    ai_action_items: underwriting.ai_action_items,
-    ai_next_step: underwriting.ai_next_step,
-  }
+export interface WealthJob {
+  source: string
+  job_title: string
+  company: string | null
+  salary_min_cents: number | null
+  salary_max_cents: number | null
+  location: string | null
+  description: string | null
+  listing_url: string
+  posted_at: string | null
+  raw_snippet: string | null
+}
 
-  let extra: Record<string, unknown> = {}
+// ─── Upsert helpers ──────────────────────────────────────────
 
-  if (listing.opportunity_type === 'acquisition' || listing.opportunity_type === 'capital_injection') {
-    extra = {
-      asking_price: listing.asking_price ?? null,
-      revenue_annual: listing.revenue_annual ?? null,
-      cash_flow_annual: listing.cash_flow_annual ?? null,
-      staff_count: listing.staff_count ?? null,
-      business_type: listing.business_type ?? null,
-      passive_possible: underwriting.passive_possible ?? null,
-      owner_hours_per_week: underwriting.owner_hours_per_week ?? null,
-      equity_needed: underwriting.equity_needed ?? null,
-      financing_options: underwriting.financing_options ?? [],
-      debt_service_annual: underwriting.debt_service_annual ?? null,
-      cash_on_cash_return: underwriting.cash_on_cash_return ?? null,
-      risk_score: underwriting.risk_score ?? null,
-      seller_motivation: underwriting.seller_motivation ?? null,
-    }
-  } else {
-    extra = {
-      firm_name: (listing as { firm_name?: string }).firm_name ?? null,
-      job_title: (listing as { job_title?: string }).job_title ?? null,
-      estimated_comp_low: underwriting.estimated_comp_low ?? (listing as { estimated_comp_low?: number }).estimated_comp_low ?? null,
-      estimated_comp_high: underwriting.estimated_comp_high ?? (listing as { estimated_comp_high?: number }).estimated_comp_high ?? null,
-      fit_score: underwriting.fit_score ?? null,
-      difficulty_score: underwriting.difficulty_score ?? null,
-      warm_outreach: underwriting.warm_outreach ?? null,
-    }
+export async function upsertBusiness(
+  b: WealthBusiness
+): Promise<{ id: string; isNew: boolean } | null> {
+  const { data: existing } = await db
+    .from('wealth_businesses')
+    .select('id')
+    .eq('source', b.source)
+    .eq('listing_url', b.listing_url)
+    .maybeSingle()
+
+  if (existing) {
+    await db
+      .from('wealth_businesses')
+      .update({ last_seen_at: new Date().toISOString() })
+      .eq('id', existing.id)
+    return { id: existing.id, isNew: false }
   }
 
   const { data, error } = await db
-    .from('wealth_opportunities')
-    .insert({ ...base, ...extra })
+    .from('wealth_businesses')
+    .insert(b)
     .select('id')
     .single()
 
   if (error) {
-    // Ignore duplicate violations silently
-    if (!error.message.includes('duplicate') && !error.message.includes('unique')) {
-      console.error('[wealth:db] Insert failed:', error.message)
-    }
+    console.error('[wealth/db] Insert business failed:', error.message)
     return null
   }
 
-  return data.id
+  return { id: data.id, isNew: true }
 }
 
-// ─── Mark that we sent an alert ───────────────────────────────────────────────
+export async function upsertCapital(
+  c: WealthCapital
+): Promise<{ id: string; isNew: boolean } | null> {
+  const { data: existing } = await db
+    .from('wealth_capital_opportunities')
+    .select('id')
+    .eq('source', c.source)
+    .eq('listing_url', c.listing_url)
+    .maybeSingle()
 
-export async function markAlertSent(id: string): Promise<void> {
-  await db
-    .from('wealth_opportunities')
-    .update({ alert_sent_at: new Date().toISOString() })
-    .eq('id', id)
-}
+  if (existing) {
+    await db
+      .from('wealth_capital_opportunities')
+      .update({ last_seen_at: new Date().toISOString() })
+      .eq('id', existing.id)
+    return { id: existing.id, isNew: false }
+  }
 
-// ─── Fetch top opportunities for digest ───────────────────────────────────────
-
-export async function fetchDigestOpportunities(since: Date): Promise<WealthOpportunity[]> {
   const { data, error } = await db
-    .from('wealth_opportunities')
-    .select('*')
-    .gte('found_at', since.toISOString())
-    .in('grade', ['A+', 'A', 'B'])
-    .order('found_at', { ascending: false })
-    .limit(50)
+    .from('wealth_capital_opportunities')
+    .insert(c)
+    .select('id')
+    .single()
 
   if (error) {
-    console.error('[wealth:db] Digest query failed:', error.message)
-    return []
+    console.error('[wealth/db] Insert capital opp failed:', error.message)
+    return null
   }
 
-  return (data ?? []) as WealthOpportunity[]
+  return { id: data.id, isNew: true }
 }
 
-// ─── Save outreach draft ──────────────────────────────────────────────────────
+export async function upsertJob(
+  j: WealthJob
+): Promise<{ id: string; isNew: boolean } | null> {
+  const { data: existing } = await db
+    .from('wealth_jobs')
+    .select('id')
+    .eq('source', j.source)
+    .eq('listing_url', j.listing_url)
+    .maybeSingle()
 
-export async function saveOutreachDraft(draft: {
-  opportunity_id: string
-  outreach_type: 'broker' | 'owner' | 'job'
-  recipient_name?: string
-  recipient_email?: string
-  subject: string
-  body: string
-  follow_up_due_at?: string
-}): Promise<void> {
-  const { error } = await db.from('wealth_outreach').insert(draft)
+  if (existing) return { id: existing.id, isNew: false }
+
+  const { data, error } = await db
+    .from('wealth_jobs')
+    .insert(j)
+    .select('id')
+    .single()
+
   if (error) {
-    console.error('[wealth:db] Outreach insert failed:', error.message)
+    console.error('[wealth/db] Insert job failed:', error.message)
+    return null
   }
+
+  return { id: data.id, isNew: true }
 }
 
-// ─── Log digest send ─────────────────────────────────────────────────────────
+// Record a draft alert and mark the source row as alerted
+export async function recordAlert(
+  category: 'business' | 'capital' | 'job',
+  referenceId: string,
+  draftSubject: string,
+  draftBodyText: string
+): Promise<void> {
+  const { error } = await db.from('wealth_alerts').insert({
+    category,
+    reference_id: referenceId,
+    draft_subject: draftSubject,
+    draft_body_text: draftBodyText,
+  })
 
-export async function logDigest(params: {
-  recipient_email: string
-  subject: string
-  total_opps: number
-  a_plus_count: number
-  a_count: number
-  b_count: number
-}): Promise<void> {
-  await db.from('wealth_digest_log').insert(params)
+  if (error) {
+    console.error('[wealth/db] recordAlert failed:', error.message)
+    return
+  }
+
+  const table =
+    category === 'business'
+      ? 'wealth_businesses'
+      : category === 'capital'
+        ? 'wealth_capital_opportunities'
+        : 'wealth_jobs'
+
+  await db
+    .from(table)
+    .update({ alerted_at: new Date().toISOString() })
+    .eq('id', referenceId)
 }

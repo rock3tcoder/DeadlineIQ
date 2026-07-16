@@ -1,161 +1,141 @@
-/**
- * Outreach draft generator
- *
- * Creates ready-to-send email drafts for:
- *  - Brokers (business acquisition leads)
- *  - Business owners (capital injection / equity buy-in)
- *  - Hiring managers / recruiters (job opportunities)
- *
- * Drafts are stored in the wealth_outreach table with follow-up timers.
- */
+// Draft outreach templates for each opportunity category.
+//
+// IMPORTANT: These drafts are NEVER sent automatically. They are saved to
+// wealth_alerts.draft_body_text for the user to copy, personalise, and
+// send manually from their own email client.
+//
+// H1B note: templates reference passive/investor ownership — the user
+// must consult an immigration attorney before proceeding with any
+// acquisition or investment.
 
-import type { WealthOpportunity } from './types.js'
-import { saveOutreachDraft } from './db.js'
+function formatMoney(cents: number | null): string {
+  if (cents === null) return 'undisclosed'
+  const d = cents / 100
+  if (d >= 1_000_000) return `$${(d / 1_000_000).toFixed(1)}M`
+  if (d >= 1_000) return `$${(d / 1_000).toFixed(0)}K`
+  return `$${d.toFixed(0)}`
+}
 
-const SENDER_NAME = 'Ben Rubera'
+// ─── Business for sale ───────────────────────────────────────
 
-// ─── Broker outreach ──────────────────────────────────────────────────────────
+export interface BusinessOutreachContext {
+  businessTitle: string
+  askingPrice: number | null
+  cashFlow: number | null
+  location: string | null
+  listingUrl: string
+}
 
-function buildBrokerOutreach(opp: WealthOpportunity): { subject: string; body: string } {
-  const subject = `Interest in ${opp.name}`
+export function buildBusinessOutreachDraft(ctx: BusinessOutreachContext): {
+  subject: string
+  body: string
+} {
+  return {
+    subject: `Interest in acquiring: ${ctx.businessTitle}`,
+    body: `Hello,
 
-  const financialsNote =
-    opp.asking_price
-      ? `I saw the asking price of $${opp.asking_price.toLocaleString()} and wanted to learn more about the financials.`
-      : `I came across your listing and would like to learn more about the opportunity.`
+I came across your listing for "${ctx.businessTitle}" on BizBuySell and wanted to reach out about a potential acquisition.
 
-  const body = `Hi,
+Asking price: ${formatMoney(ctx.askingPrice)}
+Cash flow: ${formatMoney(ctx.cashFlow)}${ctx.location ? `\nLocation: ${ctx.location}` : ''}
+Listing: ${ctx.listingUrl}
 
-I came across your listing for ${opp.name} and wanted to reach out directly.
+I am a passive investor seeking to acquire a well-run business with stable cash flows. I am specifically looking for businesses that can operate with minimal day-to-day owner involvement, as I would be stepping into an investor/silent-partner role.
 
-${financialsNote}
+I have liquid capital available and am prepared to move quickly for the right opportunity. Could you share:
 
-My background is in private equity and investment banking, with experience across deal sourcing, financial modeling, and transaction execution. I'm actively looking to acquire or invest in strong cash-flowing businesses with existing management teams and scalable operations.
+1. A brief description of day-to-day operations and management structure
+2. Your reason for selling
+3. Whether the current management team is willing to stay on post-acquisition
 
-A few things that would be helpful:
-- CIM or information memorandum
-- 2–3 years of financials (P&L, revenue breakdown)
-- Seller's reason for listing
-- Current management / staffing structure
-- Any financing seller would consider (seller note, earnout, etc.)
-
-I can move quickly and have capital ready. Would appreciate a brief call or any materials you can share.
+I would love to schedule a 20-minute call at your convenience to learn more.
 
 Best regards,
-${SENDER_NAME}`
+[Your Name]
+[Your Email]
+[Your Phone]
 
-  return { subject, body }
-}
-
-// ─── Owner outreach (capital injection / equity buy-in) ───────────────────────
-
-function buildOwnerOutreach(opp: WealthOpportunity): { subject: string; body: string } {
-  const subject = `Interest in a Capital Partnership — ${opp.name}`
-
-  const body = `Hi,
-
-I came across ${opp.name} and understand you may be exploring growth capital or a strategic investment partner.
-
-I'm a private equity and investment banking professional actively looking to invest in authentic operating businesses with long-term potential. I'm particularly interested in situations where the existing team continues running day-to-day operations — I'm not looking to take over operations, but rather to provide capital and strategic support as a minority investor or silent partner.
-
-What I can offer:
-- $20,000–$50,000 in equity capital (can structure as debt or equity)
-- PE/IB background for financial planning, growth strategy, and exit planning
-- Long-term patient capital — not looking for a quick flip
-- Flexible deal structure (equity, preferred equity, convertible note, etc.)
-
-I'd love to learn more about your business and whether there's a fit. Happy to sign an NDA and have a confidential conversation.
-
-Best regards,
-${SENDER_NAME}`
-
-  return { subject, body }
-}
-
-// ─── Job outreach ─────────────────────────────────────────────────────────────
-
-function buildJobOutreach(opp: WealthOpportunity): { subject: string; body: string } {
-  const firmName = opp.firm_name ?? 'your firm'
-  const subject = `Interest in ${opp.job_title ?? 'Investment'} Role — ${firmName}`
-
-  const body = `Hi,
-
-I'm currently a private equity associate with prior investment banking experience and am exploring compelling roles where I can add value immediately.
-
-I came across the ${opp.job_title ?? 'investment'} position at ${firmName} and believe my background aligns well — including financial modeling, deal origination, due diligence, and portfolio company work.
-
-Quick highlights:
-- 2+ years in PE (deal execution, sourcing, portfolio monitoring)
-- Prior IB background (M&A, LBO modeling, pitching)
-- Track record across private equity, credit, and equity investments
-- Strong attention to detail and ability to move fast on time-sensitive deals
-
-I'd love to connect and learn more about the role and team. Happy to share my resume or have a quick call at your convenience.
-
-Best regards,
-${SENDER_NAME}`
-
-  return { subject, body }
-}
-
-// ─── Follow-up draft ──────────────────────────────────────────────────────────
-
-export function buildFollowUp(
-  opp: WealthOpportunity,
-  type: 'broker' | 'owner' | 'job',
-  originalSubject: string
-): { subject: string; body: string } {
-  const subject = `Re: ${originalSubject}`
-
-  const body =
-    type === 'job'
-      ? `Hi,
-
-Just wanted to follow up on my earlier note regarding the ${opp.job_title ?? 'investment'} role at ${opp.firm_name ?? 'your firm'}.
-
-Still very interested — happy to chat at your convenience or provide any additional materials.
-
-Best,
-${SENDER_NAME}`
-      : `Hi,
-
-Just following up on my earlier message about ${opp.name}.
-
-I remain interested and can move quickly if you have materials available. Happy to jump on a quick call this week.
-
-Best,
-${SENDER_NAME}`
-
-  return { subject, body }
-}
-
-// ─── Main export: generate + save outreach draft ──────────────────────────────
-
-export async function generateOutreach(opp: WealthOpportunity): Promise<void> {
-  let draft: { subject: string; body: string }
-  let outreachType: 'broker' | 'owner' | 'job'
-
-  if (opp.opportunity_type === 'job') {
-    draft = buildJobOutreach(opp)
-    outreachType = 'job'
-  } else if (opp.opportunity_type === 'capital_injection') {
-    draft = buildOwnerOutreach(opp)
-    outreachType = 'owner'
-  } else {
-    draft = buildBrokerOutreach(opp)
-    outreachType = 'broker'
+---
+DRAFT ONLY — Review and personalise before sending.
+Consult an immigration attorney regarding H1B passive-ownership rules before proceeding.`,
   }
+}
 
-  // Set follow-up reminder 3 business days out (~4.3 calendar days)
-  const followUpAt = new Date(Date.now() + 4.3 * 24 * 60 * 60 * 1000).toISOString()
+// ─── Capital injection / equity opportunity ──────────────────
 
-  await saveOutreachDraft({
-    opportunity_id: opp.id,
-    outreach_type: outreachType,
-    subject: draft.subject,
-    body: draft.body,
-    follow_up_due_at: followUpAt,
-  })
+export interface CapitalOutreachContext {
+  companyName: string
+  amountSeeking: number | null
+  industry: string | null
+  listingUrl: string
+}
 
-  console.log(`  [outreach] Draft saved for "${opp.name}" (${outreachType})`)
+export function buildCapitalOutreachDraft(ctx: CapitalOutreachContext): {
+  subject: string
+  body: string
+} {
+  return {
+    subject: `Investor interest in ${ctx.companyName}`,
+    body: `Hello,
+
+I noticed ${ctx.companyName}'s listing on Acquire.com${ctx.industry ? ` under the ${ctx.industry} category` : ''} and am interested in exploring a potential acquisition or investment.
+
+Amount seeking: ${formatMoney(ctx.amountSeeking)}
+Listing: ${ctx.listingUrl}
+
+I am a passive investor with liquid capital available, focused on profitable online businesses and SaaS products with consistent recurring revenue. I am not looking to take an operational role — I would be a hands-off investor, retaining your existing team and operational structure.
+
+I would like to understand more about:
+
+1. Current MRR/ARR and month-over-month growth
+2. Churn rate and customer concentration
+3. Technical infrastructure and team size
+4. Whether you are open to an earnout or seller-financing component
+
+Would you be available for a 30-minute call this week?
+
+Best regards,
+[Your Name]
+[Your Email]
+
+---
+DRAFT ONLY — Review and personalise before sending.
+Consult an immigration attorney regarding H1B passive-ownership rules before proceeding.`,
+  }
+}
+
+// ─── Job application ─────────────────────────────────────────
+
+export interface JobOutreachContext {
+  jobTitle: string
+  company: string | null
+  salaryMax: number | null
+  listingUrl: string
+}
+
+export function buildJobOutreachDraft(ctx: JobOutreachContext): {
+  subject: string
+  body: string
+} {
+  const company = ctx.company ?? 'your organisation'
+  return {
+    subject: `Application — ${ctx.jobTitle}${ctx.company ? ` at ${ctx.company}` : ''}`,
+    body: `Hello,
+
+I am writing to express my strong interest in the ${ctx.jobTitle} role at ${company}${ctx.salaryMax ? ` (up to ${formatMoney(ctx.salaryMax)})` : ''}.
+
+Listing: ${ctx.listingUrl}
+
+[Add a brief summary of your relevant experience and why this role is a strong fit.]
+
+I would welcome the opportunity to discuss how my background aligns with your team's needs.
+
+Best regards,
+[Your Name]
+[Your Email]
+[LinkedIn URL]
+
+---
+DRAFT ONLY — Review and personalise before sending.`,
+  }
 }
